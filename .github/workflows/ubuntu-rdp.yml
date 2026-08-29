@@ -89,24 +89,26 @@ jobs:
           # Pre-configure XFCE Dark Theme & Papirus Icons and disable heavy compositing
           mkdir -p ~/.config/xfce4/xfconf/xfce-perchannel-xml/
           cat << 'EOF' > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xsettings" version="1.0">
-  <property name="Net" type="empty">
-    <property name="ThemeName" type="string" value="Arc-Dark"/>
-    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
-  </property>
-</channel>
-EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xsettings" version="1.0">
+            <property name="Net" type="empty">
+              <property name="ThemeName" type="string" value="Arc-Dark"/>
+              <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+            </property>
+          </channel>
+          EOF
+          sed -i 's/^[ \t]*//' ~/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
 
           cat << 'EOF' > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfwm4" version="1.0">
-  <property name="general" type="empty">
-    <property name="theme" type="string" value="Arc-Dark"/>
-    <property name="use_compositing" type="bool" value="false"/>
-  </property>
-</channel>
-EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfwm4" version="1.0">
+            <property name="general" type="empty">
+              <property name="theme" type="string" value="Arc-Dark"/>
+              <property name="use_compositing" type="bool" value="false"/>
+            </property>
+          </channel>
+          EOF
+          sed -i 's/^[ \t]*//' ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 
       - name: Install Cloudflared & Network Tunnels
         run: |
