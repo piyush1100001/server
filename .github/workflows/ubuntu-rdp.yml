@@ -90,7 +90,7 @@ jobs:
           sudo cp ~/.xsession /etc/skel/.xsession 2>/dev/null || true
           sudo systemctl restart xrdp 2>/dev/null || true
 
-          # Pre-configure XFCE Dark Theme & Papirus Icons and disable heavy compositing
+          # Pre-configure XFCE Performance: Disable all animations, shadows, and compositor
           mkdir -p ~/.config/xfce4/xfconf/xfce-perchannel-xml/
           cat << 'EOF' > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
           <?xml version="1.0" encoding="UTF-8"?>
@@ -98,6 +98,8 @@ jobs:
             <property name="Net" type="empty">
               <property name="ThemeName" type="string" value="Arc-Dark"/>
               <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+              <property name="EnableEventSounds" type="bool" value="false"/>
+              <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
             </property>
           </channel>
           EOF
@@ -109,6 +111,11 @@ jobs:
             <property name="general" type="empty">
               <property name="theme" type="string" value="Arc-Dark"/>
               <property name="use_compositing" type="bool" value="false"/>
+              <property name="box_move" type="bool" value="true"/>
+              <property name="box_resize" type="bool" value="true"/>
+              <property name="show_dock_shadow" type="bool" value="false"/>
+              <property name="show_frame_shadow" type="bool" value="false"/>
+              <property name="show_popup_shadow" type="bool" value="false"/>
             </property>
           </channel>
           EOF
@@ -147,17 +154,25 @@ jobs:
       - name: Start XFCE Desktop & Remote Services
         run: |
           RES="${{ github.event.inputs.screen_resolution }}"
-          echo "==> Launching Xvfb virtual display on :1 with resolution $RES..."
-          Xvfb :1 -screen 0 ${RES}x24 +extension GLX +render -noreset &
+          echo "==> Launching optimized Xvfb virtual display on :1 with resolution $RES..."
+          Xvfb :1 -screen 0 ${RES}x24 +extension GLX +extension MIT-SHM +render -noreset &
           export DISPLAY=:1
           sleep 1
 
-          echo "==> Launching XFCE session in background..."
+          echo "==> Launching XFCE session..."
           startxfce4 > /tmp/xfce.log 2>&1 &
           sleep 2
 
-          echo "==> Starting optimized x11vnc server on port 5900..."
-          x11vnc -display :1 -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg -noxdamage -o /tmp/x11vnc.log
+          echo "==> Starting ultra-low latency x11vnc server on port 5900..."
+          # Low latency flags: wait 5ms, defer 5ms, client-side cursor, fast speed profile
+          x11vnc -display :1 -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg \
+            -wait 5 \
+            -defer 5 \
+            -noxdamage \
+            -nowf \
+            -cursor arrow \
+            -speeds 100mbps \
+            -o /tmp/x11vnc.log
 
           echo "==> Starting noVNC / WebSockify on port 6080..."
           /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
@@ -187,21 +202,25 @@ jobs:
             NGROK_HOST=$(grep -o 'tcp://[-a-zA-Z0-9.:]*' /tmp/ngrok.log | head -n 1 || true)
           fi
 
+          PASS="${{ github.event.inputs.vnc_password }}"
+          # Optimized noVNC direct URL with auto-connect, local scaling, and fast compression
+          OPTIMIZED_WEB_URL="${CF_URL}/vnc.html?autoconnect=true&resize=scale&quality=6&compression=2"
+
           # Output connection details to GitHub Step Summary
           echo "### 🚀 Ubuntu 24.04 XFCE Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 🌐 Web Browser Access (Zero Client Setup):" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🌐 1-Click Fast Web Browser Access:" >> $GITHUB_STEP_SUMMARY
           if [ -n "$CF_URL" ]; then
-            echo "- **Direct URL:** [${CF_URL}/vnc.html](${CF_URL}/vnc.html)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Password:** \`${{ github.event.inputs.vnc_password }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **👉 [Click Here to Open Desktop](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "- *Tunnel generation in progress, check raw logs below.*" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
           echo "- **Username:** \`runner\` (or \`root\`)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Password:** \`${{ github.event.inputs.vnc_password }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Desktop Environment:** XFCE4 (Arc-Dark + Papirus-Dark Theme)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Desktop Environment:** XFCE4 (Ultra Low Latency + Arc-Dark)" >> $GITHUB_STEP_SUMMARY
           echo "- **Screen Resolution:** \`${{ github.event.inputs.screen_resolution }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -217,9 +236,9 @@ jobs:
           fi
 
           echo "--------------------------------------------------------"
-          echo ">>> CLOUDFLARE WEB DESKTOP LINK: ${CF_URL}/vnc.html"
+          echo ">>> 1-CLICK DESKTOP LINK: ${OPTIMIZED_WEB_URL}"
           echo ">>> USERNAME: runner"
-          echo ">>> PASSWORD: ${{ github.event.inputs.vnc_password }}"
+          echo ">>> PASSWORD: ${PASS}"
           if [ -n "$NGROK_HOST" ]; then
             echo ">>> NGROK RDP ADDRESS: ${NGROK_HOST#tcp://}"
           fi
