@@ -81,6 +81,7 @@ jobs:
       - name: Generate Connection Info & Step Summary
         shell: powershell
         run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           $Password = "${{ github.event.inputs.rdp_password }}"
           $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
           $TS_IP = ""
@@ -98,9 +99,9 @@ jobs:
           }
 
           $Summary = @(
-            "### 🚀 Windows Server Remote Desktop is LIVE!"
+            "### Windows Server Remote Desktop is LIVE!"
             ""
-            "#### 💻 Credentials:"
+            "#### System Credentials:"
             "- **Username:** ``runneradmin``"
             "- **Password:** ``$Password``"
             "- **OS:** Windows Server Datacenter"
@@ -108,14 +109,14 @@ jobs:
           )
 
           if ($TS_IP -ne "") {
-            $Summary += "#### 🛡️ Tailscale Direct RDP (Recommended):"
+            $Summary += "#### Tailscale Direct RDP (Recommended):"
             $Summary += "- **PC Name / Address:** ``$TS_IP:3389`` (or ``gha-windows-rdp:3389``)"
             $Summary += "- *Use Microsoft Remote Desktop on Mac or Windows.*"
             $Summary += ""
           }
 
           if ($NGROK_HOST -ne "") {
-            $Summary += "#### 🔌 Ngrok Public RDP:"
+            $Summary += "#### Ngrok Public RDP:"
             $Summary += "- **PC Name / Address:** ``$NGROK_HOST``"
             $Summary += ""
           }
