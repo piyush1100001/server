@@ -1,4 +1,4 @@
-name: Ubuntu 24.04 KDE Remote Desktop
+name: Ubuntu 24.04 XFCE Fast Remote Desktop
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         default: 'Admin@12345'
       screen_resolution:
-        description: 'Screen Resolution (e.g. 1920x1080, 2560x1440, 1280x720)'
+        description: 'Screen Resolution (e.g. 1920x1080, 2560x1440, 1366x768)'
         required: false
         default: '1920x1080'
       ngrok_token:
@@ -25,8 +25,8 @@ on:
         default: '5.5'
 
 jobs:
-  kde-rdp:
-    name: Ubuntu 24.04 KDE Runner
+  xfce-rdp:
+    name: Ubuntu 24.04 XFCE Runner
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -37,19 +37,20 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules 2>/dev/null || true
           df -h
 
-      - name: Install KDE Plasma Desktop & Remote Access Tools
+      - name: Install XFCE Desktop & Modern Dark Theme
         run: |
           echo "==> Updating package repositories..."
           sudo apt-get update -y
           
-          echo "==> Installing KDE Plasma Desktop Minimal..."
+          echo "==> Installing lightweight XFCE4, Papirus icons, and dark theme..."
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            kde-plasma-desktop \
-            plasma-workspace \
-            plasma-widgets-addons \
-            dolphin \
-            konsole \
-            kate \
+            xfce4 \
+            xfce4-terminal \
+            xfce4-taskmanager \
+            thunar \
+            mousepad \
+            papirus-icon-theme \
+            arc-theme \
             dbus-x11 \
             xvfb \
             x11vnc \
@@ -66,7 +67,7 @@ jobs:
             pulseaudio \
             pavucontrol
 
-      - name: Configure User & Password
+      - name: Configure User, XFCE Aesthetics & Performance
         run: |
           USER_PASS="${{ github.event.inputs.vnc_password }}"
           echo "runner:$USER_PASS" | sudo chpasswd
@@ -76,14 +77,36 @@ jobs:
           mkdir -p ~/.vnc
           x11vnc -storepasswd "$USER_PASS" ~/.vnc/passwd
 
-          # Configure XRDP for KDE Plasma
-          echo "export DESKTOP_SESSION=plasma" > ~/.xsession
-          echo "export XDG_CURRENT_DESKTOP=KDE" >> ~/.xsession
+          # Configure XRDP for XFCE
+          echo "export DESKTOP_SESSION=xfce" > ~/.xsession
+          echo "export XDG_CURRENT_DESKTOP=XFCE" >> ~/.xsession
           echo "export XDG_SESSION_TYPE=x11" >> ~/.xsession
-          echo "exec startplasma-x11" >> ~/.xsession
+          echo "exec startxfce4" >> ~/.xsession
           chmod +x ~/.xsession
           sudo cp ~/.xsession /etc/skel/.xsession 2>/dev/null || true
           sudo systemctl restart xrdp 2>/dev/null || true
+
+          # Pre-configure XFCE Dark Theme & Papirus Icons and disable heavy compositing
+          mkdir -p ~/.config/xfce4/xfconf/xfce-perchannel-xml/
+          cat << 'EOF' > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Arc-Dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+  </property>
+</channel>
+EOF
+
+          cat << 'EOF' > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Arc-Dark"/>
+    <property name="use_compositing" type="bool" value="false"/>
+  </property>
+</channel>
+EOF
 
       - name: Install Cloudflared & Network Tunnels
         run: |
@@ -105,27 +128,27 @@ jobs:
           if [ -n "${{ github.event.inputs.tailscale_authkey }}" ]; then
             echo "==> Installing Tailscale..."
             curl -fsSL https://tailscale.com/install.sh | sh
-            sudo tailscale up --authkey="${{ github.event.inputs.tailscale_authkey }}" --hostname="gha-ubuntu-kde"
+            sudo tailscale up --authkey="${{ github.event.inputs.tailscale_authkey }}" --hostname="gha-ubuntu-xfce"
           fi
 
-      - name: Start KDE Desktop & Remote Services
+      - name: Start XFCE Desktop & Remote Services
         run: |
           RES="${{ github.event.inputs.screen_resolution }}"
           echo "==> Launching Xvfb virtual display on :1 with resolution $RES..."
           Xvfb :1 -screen 0 ${RES}x24 +extension GLX +render -noreset &
           export DISPLAY=:1
+          sleep 1
+
+          echo "==> Launching XFCE session in background..."
+          startxfce4 > /tmp/xfce.log 2>&1 &
           sleep 2
 
-          echo "==> Launching KDE Plasma session in background..."
-          startplasma-x11 > /tmp/plasma.log 2>&1 &
-          sleep 5
-
-          echo "==> Starting x11vnc server on port 5900..."
-          x11vnc -display :1 -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg -o /tmp/x11vnc.log
+          echo "==> Starting optimized x11vnc server on port 5900..."
+          x11vnc -display :1 -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg -noxdamage -o /tmp/x11vnc.log
 
           echo "==> Starting noVNC / WebSockify on port 6080..."
           /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
-          sleep 3
+          sleep 2
 
       - name: Launch Cloudflare Quick Tunnel & Extract Access Link
         run: |
@@ -152,7 +175,7 @@ jobs:
           fi
 
           # Output connection details to GitHub Step Summary
-          echo "### 🚀 Ubuntu 24.04 KDE Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Ubuntu 24.04 XFCE Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### 🌐 Web Browser Access (Zero Client Setup):" >> $GITHUB_STEP_SUMMARY
           if [ -n "$CF_URL" ]; then
@@ -165,7 +188,7 @@ jobs:
           echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
           echo "- **Username:** \`runner\` (or \`root\`)" >> $GITHUB_STEP_SUMMARY
           echo "- **Password:** \`${{ github.event.inputs.vnc_password }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Desktop Environment:** KDE Plasma (Ubuntu 24.04 LTS)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Desktop Environment:** XFCE4 (Arc-Dark + Papirus-Dark Theme)" >> $GITHUB_STEP_SUMMARY
           echo "- **Screen Resolution:** \`${{ github.event.inputs.screen_resolution }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -200,7 +223,7 @@ jobs:
           fi
 
           echo "==> Session active for $HOURS hours ($SECONDS_TOTAL seconds)."
-          echo "==> You can now access your KDE desktop!"
+          echo "==> You can now access your XFCE desktop!"
           echo "==> To terminate early, click 'Cancel workflow' in GitHub Actions."
 
           START_TIME=$(date +%s)
