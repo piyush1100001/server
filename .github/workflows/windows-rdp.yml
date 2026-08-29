@@ -42,16 +42,11 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
 
       - name: Set Windows Admin Password
-        shell: powershell
+        shell: cmd
         run: |
-          $Password = "${{ github.event.inputs.rdp_password }}"
-          Write-Host "==> Setting password for runneradmin..."
-          net user runneradmin $Password
-          
-          # Ensure runneradmin is in Remote Desktop Users and Administrators
-          $null = net localgroup "Remote Desktop Users" runneradmin /add 2>&1
-          $null = net localgroup "Administrators" runneradmin /add 2>&1
-          $global:LASTEXITCODE = 0
+          echo ==> Setting password for runneradmin...
+          net user runneradmin ${{ github.event.inputs.rdp_password }}
+          net user runneradmin /active:yes
 
       - name: Setup Network Tunnels (Tailscale & Ngrok)
         shell: powershell
