@@ -144,11 +144,12 @@ jobs:
             ngrok config add-authtoken "${{ github.event.inputs.ngrok_token }}"
           fi
 
-          # If Tailscale key provided, install tailscale
-          if [ -n "${{ github.event.inputs.tailscale_authkey }}" ]; then
+          # If Tailscale key provided (via input or repo secret), install and connect
+          TS_KEY="${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
+          if [ -n "$TS_KEY" ]; then
             echo "==> Installing Tailscale..."
             curl -fsSL https://tailscale.com/install.sh | sh
-            sudo tailscale up --authkey="${{ github.event.inputs.tailscale_authkey }}" --hostname="gha-ubuntu-xfce"
+            sudo tailscale up --authkey="$TS_KEY" --hostname="gha-ubuntu-xfce" --accept-routes
           fi
 
       - name: Start XFCE Desktop & Remote Services
@@ -229,10 +230,12 @@ jobs:
             echo "- **RDP Address:** \`${NGROK_HOST#tcp://}\`" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [ -n "${{ github.event.inputs.tailscale_authkey }}" ]; then
+          if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
             TS_IP=$(tailscale ip -4 || true)
-            echo "#### 🛡️ Tailscale Private RDP:" >> $GITHUB_STEP_SUMMARY
-            echo "- **RDP Address:** \`${TS_IP}:3389\`" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🛡️ Tailscale Native Microsoft RDP:" >> $GITHUB_STEP_SUMMARY
+            echo "- **PC Name / Address:** \`${TS_IP}:3389\` (or \`gha-ubuntu-xfce:3389\`)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Username:** \`runner\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "--------------------------------------------------------"
