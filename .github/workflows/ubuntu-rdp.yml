@@ -1,0 +1,220 @@
+name: Ubuntu 24.04 KDE Remote Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      vnc_password:
+        description: 'VNC & User Password (for login)'
+        required: true
+        default: 'Admin@12345'
+      screen_resolution:
+        description: 'Screen Resolution (e.g. 1920x1080, 2560x1440, 1280x720)'
+        required: false
+        default: '1920x1080'
+      ngrok_token:
+        description: 'Optional: Ngrok Auth Token (for native TCP RDP port 3389)'
+        required: false
+        default: ''
+      tailscale_authkey:
+        description: 'Optional: Tailscale Auth Key (for direct private VPN RDP)'
+        required: false
+        default: ''
+      session_hours:
+        description: 'Session duration in hours (Max 5.8 to avoid GitHub 6h hard cutoff)'
+        required: false
+        default: '5.5'
+
+jobs:
+  kde-rdp:
+    name: Ubuntu 24.04 KDE Runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize Disk Space
+        run: |
+          echo "==> Freeing up runner disk space..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules 2>/dev/null || true
+          df -h
+
+      - name: Install KDE Plasma Desktop & Remote Access Tools
+        run: |
+          echo "==> Updating package repositories..."
+          sudo apt-get update -y
+          
+          echo "==> Installing KDE Plasma Desktop Minimal..."
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            kde-plasma-desktop \
+            plasma-workspace \
+            plasma-widgets-addons \
+            dolphin \
+            konsole \
+            kate \
+            dbus-x11 \
+            xvfb \
+            x11vnc \
+            novnc \
+            websockify \
+            xrdp \
+            xorgxrdp \
+            curl \
+            wget \
+            git \
+            htop \
+            neofetch \
+            firefox \
+            pulseaudio \
+            pavucontrol
+
+      - name: Configure User & Password
+        run: |
+          USER_PASS="${{ github.event.inputs.vnc_password }}"
+          echo "runner:$USER_PASS" | sudo chpasswd
+          echo "root:$USER_PASS" | sudo chpasswd
+          
+          # Setup VNC Password
+          mkdir -p ~/.vnc
+          x11vnc -storepasswd "$USER_PASS" ~/.vnc/passwd
+
+          # Configure XRDP for KDE Plasma
+          echo "export DESKTOP_SESSION=plasma" > ~/.xsession
+          echo "export XDG_CURRENT_DESKTOP=KDE" >> ~/.xsession
+          echo "export XDG_SESSION_TYPE=x11" >> ~/.xsession
+          echo "exec startplasma-x11" >> ~/.xsession
+          chmod +x ~/.xsession
+          sudo cp ~/.xsession /etc/skel/.xsession 2>/dev/null || true
+          sudo systemctl restart xrdp 2>/dev/null || true
+
+      - name: Install Cloudflared & Network Tunnels
+        run: |
+          echo "==> Installing Cloudflared..."
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+          rm /tmp/cloudflared.deb
+
+          # If Ngrok token provided, install ngrok
+          if [ -n "${{ github.event.inputs.ngrok_token }}" ]; then
+            echo "==> Installing Ngrok..."
+            curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+            echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+            sudo apt-get update -y && sudo apt-get install -y ngrok
+            ngrok config add-authtoken "${{ github.event.inputs.ngrok_token }}"
+          fi
+
+          # If Tailscale key provided, install tailscale
+          if [ -n "${{ github.event.inputs.tailscale_authkey }}" ]; then
+            echo "==> Installing Tailscale..."
+            curl -fsSL https://tailscale.com/install.sh | sh
+            sudo tailscale up --authkey="${{ github.event.inputs.tailscale_authkey }}" --hostname="gha-ubuntu-kde"
+          fi
+
+      - name: Start KDE Desktop & Remote Services
+        run: |
+          RES="${{ github.event.inputs.screen_resolution }}"
+          echo "==> Launching Xvfb virtual display on :1 with resolution $RES..."
+          Xvfb :1 -screen 0 ${RES}x24 +extension GLX +render -noreset &
+          export DISPLAY=:1
+          sleep 2
+
+          echo "==> Launching KDE Plasma session in background..."
+          startplasma-x11 > /tmp/plasma.log 2>&1 &
+          sleep 5
+
+          echo "==> Starting x11vnc server on port 5900..."
+          x11vnc -display :1 -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg -o /tmp/x11vnc.log
+
+          echo "==> Starting noVNC / WebSockify on port 6080..."
+          /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
+          sleep 3
+
+      - name: Launch Cloudflare Quick Tunnel & Extract Access Link
+        run: |
+          echo "==> Starting Cloudflare Quick Tunnel for Web noVNC..."
+          cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          
+          # Wait for tunnel URL to generate
+          echo "Waiting for Cloudflare Tunnel URL..."
+          CF_URL=""
+          for i in {1..30}; do
+            CF_URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
+            if [ -n "$CF_URL" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          # Start Ngrok TCP if token was provided
+          NGROK_HOST=""
+          if [ -n "${{ github.event.inputs.ngrok_token }}" ]; then
+            ngrok tcp 3389 --log=stdout > /tmp/ngrok.log 2>&1 &
+            sleep 3
+            NGROK_HOST=$(grep -o 'tcp://[-a-zA-Z0-9.:]*' /tmp/ngrok.log | head -n 1 || true)
+          fi
+
+          # Output connection details to GitHub Step Summary
+          echo "### 🚀 Ubuntu 24.04 KDE Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🌐 Web Browser Access (Zero Client Setup):" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$CF_URL" ]; then
+            echo "- **Direct URL:** [${CF_URL}/vnc.html](${CF_URL}/vnc.html)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Password:** \`${{ github.event.inputs.vnc_password }}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- *Tunnel generation in progress, check raw logs below.*" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Username:** \`runner\` (or \`root\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Password:** \`${{ github.event.inputs.vnc_password }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Desktop Environment:** KDE Plasma (Ubuntu 24.04 LTS)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Screen Resolution:** \`${{ github.event.inputs.screen_resolution }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$NGROK_HOST" ]; then
+            echo "#### 🔌 Native Microsoft Remote Desktop (XRDP via Ngrok):" >> $GITHUB_STEP_SUMMARY
+            echo "- **RDP Address:** \`${NGROK_HOST#tcp://}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -n "${{ github.event.inputs.tailscale_authkey }}" ]; then
+            TS_IP=$(tailscale ip -4 || true)
+            echo "#### 🛡️ Tailscale Private RDP:" >> $GITHUB_STEP_SUMMARY
+            echo "- **RDP Address:** \`${TS_IP}:3389\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "--------------------------------------------------------"
+          echo ">>> CLOUDFLARE WEB DESKTOP LINK: ${CF_URL}/vnc.html"
+          echo ">>> USERNAME: runner"
+          echo ">>> PASSWORD: ${{ github.event.inputs.vnc_password }}"
+          if [ -n "$NGROK_HOST" ]; then
+            echo ">>> NGROK RDP ADDRESS: ${NGROK_HOST#tcp://}"
+          fi
+          echo "--------------------------------------------------------"
+
+      - name: Keep Runner Alive
+        run: |
+          HOURS="${{ github.event.inputs.session_hours }}"
+          SECONDS_TOTAL=$(awk "BEGIN {print int($HOURS * 3600)}")
+          
+          # Cap at 20800 seconds (5.77 hours) to ensure clean shutdown before 6h limit
+          if [ $SECONDS_TOTAL -gt 20800 ]; then
+            SECONDS_TOTAL=20800
+          fi
+
+          echo "==> Session active for $HOURS hours ($SECONDS_TOTAL seconds)."
+          echo "==> You can now access your KDE desktop!"
+          echo "==> To terminate early, click 'Cancel workflow' in GitHub Actions."
+
+          START_TIME=$(date +%s)
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            REMAINING=$((SECONDS_TOTAL - ELAPSED))
+            
+            if [ $REMAINING -le 0 ]; then
+              echo "==> Time limit reached. Shutting down gracefully."
+              break
+            fi
+
+            MINS_LEFT=$((REMAINING / 60))
+            echo "[$MINS_LEFT min remaining] Desktop session is running..."
+            sleep 300
+          done
