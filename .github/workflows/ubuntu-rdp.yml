@@ -10,7 +10,7 @@ on:
       screen_resolution:
         description: 'Screen Resolution (e.g. 1920x1080, 2560x1440, 1366x768)'
         required: false
-        default: '1920x1080'
+        default: '1920x1200'
       ngrok_token:
         description: 'Optional: Ngrok Auth Token (for native TCP RDP port 3389)'
         required: false
@@ -63,9 +63,13 @@ jobs:
             git \
             htop \
             neofetch \
-            firefox \
             pulseaudio \
             pavucontrol
+
+          echo "==> Installing Google Chrome Stable..."
+          wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/google-chrome.deb || sudo apt-get install -fy
+          rm -f /tmp/google-chrome.deb
 
       - name: Configure User, XFCE Aesthetics & Performance
         run: |
@@ -109,6 +113,13 @@ jobs:
           </channel>
           EOF
           sed -i 's/^[ \t]*//' ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+
+          # Create Desktop shortcut for Google Chrome
+          mkdir -p ~/Desktop
+          if [ -f /usr/share/applications/google-chrome.desktop ]; then
+            cp /usr/share/applications/google-chrome.desktop ~/Desktop/
+            chmod +x ~/Desktop/google-chrome.desktop
+          fi
 
       - name: Install Cloudflared & Network Tunnels
         run: |
