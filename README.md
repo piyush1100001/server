@@ -58,5 +58,20 @@ If you prefer the native **Microsoft Remote Desktop** app:
 
 ---
 
+## 🪟 Windows Server RDP
+
+To run a **Windows Server (Datacenter)** cloud desktop:
+
+1. Go to **Actions** -> **Windows Server RDP**.
+2. Click **Run workflow**:
+   - Provide `rdp_password` (default: `Admin@12345`).
+   - Provide `tailscale_authkey` (or have `TAILSCALE_AUTHKEY` saved in repository secrets).
+3. Open **Microsoft Remote Desktop** on your Mac/Windows:
+   - **PC Name**: `gha-windows-rdp:3389` (or the `100.x.y.z:3389` IP shown in Summary).
+   - **Username**: `runneradmin`
+   - **Password**: `Admin@12345`
+
+---
+
 ## 🛑 Stopping the Session
 To shut down the runner before the timer runs out, go to the active run in GitHub Actions and click **Cancel workflow**.

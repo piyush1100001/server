@@ -1,0 +1,163 @@
+name: Windows Server RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      rdp_password:
+        description: 'Windows Administrator Password'
+        required: true
+        default: 'Admin@12345'
+      ngrok_token:
+        description: 'Optional: Ngrok Auth Token (for public TCP port 3389)'
+        required: false
+        default: ''
+      tailscale_authkey:
+        description: 'Optional: Tailscale Auth Key (for direct private VPN RDP)'
+        required: false
+        default: ''
+      session_hours:
+        description: 'Session duration in hours (Max 5.8 to avoid GitHub 6h cutoff)'
+        required: false
+        default: '5.5'
+
+jobs:
+  windows-rdp:
+    name: Windows Server RDP Runner
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable Windows Remote Desktop & Configure Firewall
+        shell: powershell
+        run: |
+          Write-Host "==> Enabling Windows Remote Desktop in Registry..."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          
+          Write-Host "==> Enabling Firewall rules for Remote Desktop..."
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          Write-Host "==> Ensuring TermService is running..."
+          Start-Service -Name TermService -ErrorAction SilentlyContinue
+          Set-Service -Name TermService -StartupType Automatic
+
+      - name: Set Windows Admin Password
+        shell: powershell
+        run: |
+          $Password = "${{ github.event.inputs.rdp_password }}"
+          Write-Host "==> Setting password for runneradmin..."
+          net user runneradmin $Password
+          
+          # Also ensure runneradmin is in Remote Desktop Users and Administrators
+          net localgroup "Remote Desktop Users" runneradmin /add
+          net localgroup "Administrators" runneradmin /add
+
+      - name: Setup Network Tunnels (Tailscale & Ngrok)
+        shell: powershell
+        run: |
+          $TS_KEY = "${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
+          $NGROK_TOKEN = "${{ github.event.inputs.ngrok_token }}"
+
+          # Setup Tailscale if key is provided
+          if ($TS_KEY -ne "") {
+            Write-Host "==> Installing Tailscale for Windows..."
+            Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "$env:TEMP\tailscale-setup.exe"
+            Start-Process -FilePath "$env:TEMP\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
+            
+            $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
+            if (Test-Path $TailscaleExe) {
+              Write-Host "==> Connecting Tailscale mesh network..."
+              & $TailscaleExe up --authkey=$TS_KEY --hostname="gha-windows-rdp" --accept-routes
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          # Setup Ngrok if token is provided
+          if ($NGROK_TOKEN -ne "") {
+            Write-Host "==> Installing Ngrok for Windows..."
+            Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "$env:TEMP\ngrok.zip"
+            Expand-Archive -Path "$env:TEMP\ngrok.zip" -DestinationPath "C:\Windows\System32" -Force
+            ngrok config add-authtoken $NGROK_TOKEN
+            Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput "$env:TEMP\ngrok.log" -NoNewWindow
+            Start-Sleep -Seconds 5
+          }
+
+      - name: Generate Connection Info & Step Summary
+        shell: powershell
+        run: |
+          $Password = "${{ github.event.inputs.rdp_password }}"
+          $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
+          $TS_IP = ""
+
+          if (Test-Path $TailscaleExe) {
+            $TS_IP = (& $TailscaleExe ip -4).Trim()
+          }
+
+          $NGROK_HOST = ""
+          if (Test-Path "$env:TEMP\ngrok.log") {
+            $LogContent = Get-Content "$env:TEMP\ngrok.log" -Raw
+            if ($LogContent -match "tcp://(?<addr>[^ ]+)") {
+              $NGROK_HOST = $Matches['addr']
+            }
+          }
+
+          # Write Markdown to GitHub Step Summary
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### 🚀 Windows Server Remote Desktop is LIVE!"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### 💻 Credentials:"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Username:** \`runneradmin\` (or \`.\runneradmin\`)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Password:** \`$Password\`"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **OS:** Windows Server (Datacenter)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+
+          if ($TS_IP -ne "") {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### 🛡️ Tailscale Direct RDP (Recommended):"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **PC Name / Address:** \`$TS_IP:3389\` (or \`gha-windows-rdp:3389\`)"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- *Use Microsoft Remote Desktop on Mac or Windows.*"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+          }
+
+          if ($NGROK_HOST -ne "") {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### 🔌 Ngrok Public RDP:"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **PC Name / Address:** \`$NGROK_HOST\`"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+          }
+
+          if ($TS_IP -eq "" -and $NGROK_HOST -eq "") {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "> [!WARNING]"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "> Neither Tailscale Auth Key nor Ngrok Token was provided. Provide a Tailscale key or Ngrok token to connect."
+          }
+
+          Write-Host "========================================================"
+          Write-Host ">>> USERNAME: runneradmin"
+          Write-Host ">>> PASSWORD: $Password"
+          if ($TS_IP -ne "") { Write-Host ">>> TAILSCALE RDP ADDRESS: $TS_IP:3389" }
+          if ($NGROK_HOST -ne "") { Write-Host ">>> NGROK RDP ADDRESS: $NGROK_HOST" }
+          Write-Host "========================================================"
+
+      - name: Keep Windows Runner Alive
+        shell: powershell
+        run: |
+          $Hours = [double]"${{ github.event.inputs.session_hours }}"
+          $TotalSeconds = [int]($Hours * 3600)
+          
+          # Cap at 20800 seconds (~5.77 hours) to prevent abrupt 6h kill
+          if ($TotalSeconds -gt 20800) { $TotalSeconds = 20800 }
+
+          Write-Host "==> Windows RDP session running for $Hours hours ($TotalSeconds seconds)."
+          Write-Host "==> To terminate early, click 'Cancel workflow' in GitHub Actions."
+
+          $StartTime = Get-Date
+          while ($true) {
+            $Elapsed = ((Get-Date) - $StartTime).TotalSeconds
+            $Remaining = $TotalSeconds - $Elapsed
+            
+            if ($Remaining -le 0) {
+              Write-Host "==> Session time limit reached. Exiting."
+              break
+            }
+
+            $MinsRemaining = [int]($Remaining / 60)
+            Write-Host "[$MinsRemaining min remaining] Windows RDP service is running..."
+            Start-Sleep -Seconds 300
+          }
