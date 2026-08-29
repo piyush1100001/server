@@ -97,32 +97,35 @@ jobs:
             }
           }
 
-          # Write Markdown to GitHub Step Summary
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### 🚀 Windows Server Remote Desktop is LIVE!"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### 💻 Credentials:"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Username:** \`runneradmin\` (or \`.\runneradmin\`)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Password:** \`$Password\`"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **OS:** Windows Server (Datacenter)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+          $Summary = @(
+            "### 🚀 Windows Server Remote Desktop is LIVE!"
+            ""
+            "#### 💻 Credentials:"
+            "- **Username:** ``runneradmin``"
+            "- **Password:** ``$Password``"
+            "- **OS:** Windows Server Datacenter"
+            ""
+          )
 
           if ($TS_IP -ne "") {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### 🛡️ Tailscale Direct RDP (Recommended):"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **PC Name / Address:** \`$TS_IP:3389\` (or \`gha-windows-rdp:3389\`)"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- *Use Microsoft Remote Desktop on Mac or Windows.*"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+            $Summary += "#### 🛡️ Tailscale Direct RDP (Recommended):"
+            $Summary += "- **PC Name / Address:** ``$TS_IP:3389`` (or ``gha-windows-rdp:3389``)"
+            $Summary += "- *Use Microsoft Remote Desktop on Mac or Windows.*"
+            $Summary += ""
           }
 
           if ($NGROK_HOST -ne "") {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#### 🔌 Ngrok Public RDP:"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **PC Name / Address:** \`$NGROK_HOST\`"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+            $Summary += "#### 🔌 Ngrok Public RDP:"
+            $Summary += "- **PC Name / Address:** ``$NGROK_HOST``"
+            $Summary += ""
           }
 
           if ($TS_IP -eq "" -and $NGROK_HOST -eq "") {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "> [!WARNING]"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "> Neither Tailscale Auth Key nor Ngrok Token was provided. Provide a Tailscale key or Ngrok token to connect."
+            $Summary += "> [!WARNING]"
+            $Summary += "> Neither Tailscale Auth Key nor Ngrok Token was provided. Provide a Tailscale key or Ngrok token to connect."
           }
+
+          $Summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
           Write-Host "========================================================"
           Write-Host ">>> USERNAME: runneradmin"
