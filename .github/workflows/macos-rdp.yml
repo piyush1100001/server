@@ -35,19 +35,29 @@ jobs:
           sudo sysadminctl -resetPasswordFor runner -newPassword "$PASS" 2>/dev/null || true
           echo -e "${PASS}\n${PASS}" | sudo passwd runner 2>/dev/null || true
 
-      - name: Enable Apple Screen Sharing (VNC / ARD)
+      - name: Enable Apple Screen Sharing (VNC / ARD) & TCC Permissions
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
           echo "==> Enabling Apple Remote Desktop & Screen Sharing..."
+          
+          # Grant Screen Recording and Accessibility permissions in TCC database
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.screensharing.agent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-          # Configure Kickstart permissions and VNC password for runner
+          # Configure Kickstart permissions, legacy VNC support, and password
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
-            -users runner -privs -all \
+            -clientopts -setvnclegacy -vnclegacy yes \
             -setvncpw -vncpw "$PASS" \
-            -restart -agent -menu
+            -users runner -privs -all \
+            -restart -agent -console || true
 
       - name: Setup Network Tunnels (Tailscale & Ngrok)
         run: |
