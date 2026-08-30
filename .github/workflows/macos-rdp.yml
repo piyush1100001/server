@@ -54,12 +54,13 @@ jobs:
           TS_KEY="${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
           NGROK_TOKEN="${{ github.event.inputs.ngrok_token }}"
 
-          # Setup Tailscale
+          # Setup Tailscale via Homebrew CLI
           if [ -n "$TS_KEY" ]; then
-            echo "==> Installing Tailscale for macOS..."
-            curl -fsSL https://tailscale.com/install.sh | sh || brew install tailscale
-            sudo tailscaled &
-            sleep 3
+            echo "==> Installing Tailscale for macOS via Homebrew..."
+            brew install tailscale
+            echo "==> Starting Tailscale daemon..."
+            sudo brew services start tailscale
+            sleep 4
             sudo tailscale up --authkey="$TS_KEY" --hostname="gha-macos-rdp" --accept-routes
           fi
 
