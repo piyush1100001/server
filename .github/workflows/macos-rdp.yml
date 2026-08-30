@@ -4,15 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       vnc_password:
-        description: 'macOS User & VNC Password'
+        description: 'VNC Password (for Web & App login)'
         required: true
         default: 'Admin@12345'
+      screen_resolution:
+        description: 'Screen Resolution (e.g. 1920x1080, 1920x1200, 1680x1050)'
+        required: false
+        default: '1920x1200'
       tailscale_authkey:
-        description: 'Optional: Tailscale Auth Key (for direct Apple Screen Sharing)'
+        description: 'Optional: Tailscale Auth Key (for direct private VPN VNC)'
         required: false
         default: ''
       ngrok_token:
-        description: 'Optional: Ngrok Auth Token (for public TCP port 5900)'
+        description: 'Optional: Ngrok Auth Token (for public TCP port 5901)'
         required: false
         default: ''
       session_hours:
@@ -27,51 +31,40 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Configure macOS User Password & Privileges
+      - name: Install Desktop Server & Tunnel Tools
+        run: |
+          echo "==> Installing TigerVNC, WebSockify, and Cloudflared via Homebrew..."
+          brew install tiger-vnc websockify cloudflare/cloudflare/cloudflared 2>/dev/null || true
+
+      - name: Configure VNC Password & Display
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Setting password for runner user..."
-          
-          # Set password in DirectoryService & OpenDirectory
-          sudo dscl . -passwd /Users/runner "" "$PASS" 2>/dev/null || true
-          echo -e "${PASS}\n${PASS}" | sudo passwd runner 2>/dev/null || true
-          sudo sysadminctl -resetPasswordFor runner -newPassword "$PASS" 2>/dev/null || true
+          RES="${{ github.event.inputs.screen_resolution }}"
+          echo "==> Setting up dedicated VNC authentication file..."
+          mkdir -p ~/.vnc
+          echo "$PASS" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
 
-      - name: Enable Native Apple Screen Sharing (Port 5900)
-        run: |
-          PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Configuring Apple Remote Desktop & Screen Sharing..."
-          
-          # Grant Screen Recording and Accessibility permissions in TCC database
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.screensharing.agent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          # Create clean startup script
+          cat << 'EOF' > ~/.vnc/xstartup
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder &
+          EOF
+          chmod +x ~/.vnc/xstartup
 
-          # Authorize runner user in Screen Sharing Directory Group
-          sudo dseditgroup -o create com.apple.access_screensharing 2>/dev/null || true
-          sudo dseditgroup -o edit -a runner -t user com.apple.access_screensharing 2>/dev/null || true
-          sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
-          sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
+          echo "==> Launching TigerVNC Server on display :1 (port 5901) with resolution $RES..."
+          vncserver -kill :1 2>/dev/null || true
+          vncserver :1 -geometry $RES -depth 24 -rfbauth ~/.vnc/passwd
 
-          # Enable Screen Sharing launch daemon & preferences
-          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCOpenToAll -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCAlwaysNotifyOnDemand -bool false
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCGuestAccess -bool true
-          
-          # Run Kickstart to activate ARD and enable VNC legacy mode
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate \
-            -configure -allowAccessFor -allUsers -privs -all \
-            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASS" \
-            -restart -agent -console || true
+          echo "==> Setting up noVNC Web Client on port 6080..."
+          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
+          websockify --web /tmp/novnc 6080 localhost:5901 > /tmp/websockify.log 2>&1 &
+          sleep 2
 
-          # Force restart screensharing service
-          sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
-          sudo launchctl kickstart -kp system/com.apple.screensharing 2>/dev/null || true
+          echo "==> Launching Cloudflare Quick Tunnel for 1-Click Web Access..."
+          cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
 
       - name: Setup Network Tunnels (Tailscale & Ngrok)
         run: |
@@ -88,18 +81,29 @@ jobs:
             sudo tailscale up --authkey="$TS_KEY" --hostname="gha-macos-rdp" --accept-routes
           fi
 
-          # Setup Ngrok (forward port 5900)
+          # Setup Ngrok (forward port 5901)
           if [ -n "$NGROK_TOKEN" ]; then
             echo "==> Installing Ngrok for macOS..."
             brew install ngrok/ngrok/ngrok 2>/dev/null || true
             ngrok config add-authtoken "$NGROK_TOKEN"
-            ngrok tcp 5900 --log=stdout > /tmp/ngrok.log 2>&1 &
+            ngrok tcp 5901 --log=stdout > /tmp/ngrok.log 2>&1 &
             sleep 3
           fi
 
       - name: Generate Connection Info & Step Summary
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
+          
+          # Wait and extract Cloudflare URL
+          CF_URL=""
+          for i in {1..25}; do
+            if [ -f /tmp/cloudflared.log ]; then
+              CF_URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
+              if [ -n "$CF_URL" ]; then break; fi
+            fi
+            sleep 1
+          done
+
           TS_IP=""
           if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
             TS_IP=$(tailscale ip -4 || true)
@@ -112,20 +116,27 @@ jobs:
 
           OS_VERSION=$(sw_vers -productVersion)
           OS_NAME=$(sw_vers -productName)
+          OPTIMIZED_WEB_URL="${CF_URL}/vnc.html?autoconnect=true&resize=scale&quality=6"
 
-          echo "### 🍎 macOS Apple Screen Sharing is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "### 🍎 macOS Apple Silicon Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "$CF_URL" ]; then
+            echo "#### 🌐 1-Click Fast Web Browser Access (Zero Setup):" >> $GITHUB_STEP_SUMMARY
+            echo "- **👉 [Click Here to Open macOS in Browser](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
           echo "- **OS:** ${OS_NAME} ${OS_VERSION} (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Username:** \`runner\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **VNC Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "$TS_IP" ]; then
-            echo "#### 🍏 Native Apple Screen Sharing via Tailscale:" >> $GITHUB_STEP_SUMMARY
-            echo "- **Mac Screen Sharing Address:** \`vnc://${TS_IP}:5900\` (or \`vnc://gha-macos-rdp:5900\`)" >> $GITHUB_STEP_SUMMARY
-            echo "- **How to connect:** Open Terminal on your Mac and run: \`open vnc://${TS_IP}:5900\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Login:** Enter Username \`runner\` & Password \`${PASS}\` (or select 'By asking for password' -> enter \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🍏 Native Screen Sharing / VNC App via Tailscale:" >> $GITHUB_STEP_SUMMARY
+            echo "- **Address:** \`vnc://${TS_IP}:5901\` (or \`vnc://gha-macos-rdp:5901\`)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -136,9 +147,9 @@ jobs:
           fi
 
           echo "========================================================"
-          echo ">>> USERNAME: runner"
-          echo ">>> PASSWORD: ${PASS}"
-          if [ -n "$TS_IP" ]; then echo ">>> NATIVE SCREEN SHARING: vnc://${TS_IP}:5900"; fi
+          if [ -n "$CF_URL" ]; then echo ">>> 1-CLICK WEB LINK: ${OPTIMIZED_WEB_URL}"; fi
+          echo ">>> VNC PASSWORD: ${PASS}"
+          if [ -n "$TS_IP" ]; then echo ">>> TAILSCALE VNC: vnc://${TS_IP}:5901"; fi
           if [ -n "$NGROK_HOST" ]; then echo ">>> NGROK VNC: ${NGROK_HOST#tcp://}"; fi
           echo "========================================================"
 
