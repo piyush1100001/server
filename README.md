@@ -73,5 +73,22 @@ To run a **Windows Server (Datacenter)** cloud desktop:
 
 ---
 
-## 🛑 Stopping the Session
-To shut down the runner before the timer runs out, go to the active run in GitHub Actions and click **Cancel workflow**.
+## 🍎 macOS Remote Desktop (Apple Silicon)
+
+To run a **real macOS Apple Silicon VM**:
+
+1. Go to **Actions** -> **macOS Remote Desktop**.
+2. Click **Run workflow**:
+   - Provide `vnc_password` (default: `Admin@12345`).
+   - Provide `tailscale_authkey` (or have `TAILSCALE_AUTHKEY` saved in repository secrets).
+3. Connect natively from your Mac:
+   - Press **`Cmd + Space`** -> search for **Screen Sharing**.
+   - Enter `gha-macos-rdp` (or the `100.x.y.z:5900` IP from Summary).
+   - **Username**: `runner`
+   - **Password**: `Admin@12345`
+   - Alternatively, open in Safari: `vnc://100.x.y.z:5900`
+
+---
+
+## 🛑 Stopping Any Session
+To shut down any runner before the timer runs out, go to the active run in GitHub Actions and click **Cancel workflow**. Tailscale will automatically unregister the machine on exit.

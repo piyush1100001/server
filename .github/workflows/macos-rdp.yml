@@ -1,0 +1,150 @@
+name: macOS Remote Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      vnc_password:
+        description: 'macOS User & VNC Password'
+        required: true
+        default: 'Admin@12345'
+      tailscale_authkey:
+        description: 'Optional: Tailscale Auth Key (for direct Apple Screen Sharing)'
+        required: false
+        default: ''
+      ngrok_token:
+        description: 'Optional: Ngrok Auth Token (for public TCP port 5900)'
+        required: false
+        default: ''
+      session_hours:
+        description: 'Session duration in hours (Max 5.8 to avoid GitHub 6h cutoff)'
+        required: false
+        default: '5.5'
+
+jobs:
+  macos-rdp:
+    name: macOS Apple Silicon Runner
+    runs-on: macos-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Configure macOS User Password & Privileges
+        run: |
+          PASS="${{ github.event.inputs.vnc_password }}"
+          echo "==> Setting password for runner user..."
+          sudo dscl . -passwd /Users/runner "$PASS"
+          echo "runner:$PASS" | sudo chpasswd 2>/dev/null || true
+
+      - name: Enable Apple Screen Sharing (VNC / ARD)
+        run: |
+          echo "==> Enabling Apple Remote Desktop & Screen Sharing..."
+          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+
+          # Configure Kickstart permissions for user runner
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -users runner -privs -all \
+            -restart -agent -menu
+
+      - name: Setup Network Tunnels (Tailscale & Ngrok)
+        run: |
+          TS_KEY="${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
+          NGROK_TOKEN="${{ github.event.inputs.ngrok_token }}"
+
+          # Setup Tailscale
+          if [ -n "$TS_KEY" ]; then
+            echo "==> Installing Tailscale for macOS..."
+            curl -fsSL https://tailscale.com/install.sh | sh || brew install tailscale
+            sudo tailscaled &
+            sleep 3
+            sudo tailscale up --authkey="$TS_KEY" --hostname="gha-macos-rdp" --accept-routes
+          fi
+
+          # Setup Ngrok
+          if [ -n "$NGROK_TOKEN" ]; then
+            echo "==> Installing Ngrok for macOS..."
+            brew install ngrok/ngrok/ngrok 2>/dev/null || true
+            ngrok config add-authtoken "$NGROK_TOKEN"
+            ngrok tcp 5900 --log=stdout > /tmp/ngrok.log 2>&1 &
+            sleep 3
+          fi
+
+      - name: Generate Connection Info & Step Summary
+        run: |
+          PASS="${{ github.event.inputs.vnc_password }}"
+          TS_IP=""
+          if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
+            TS_IP=$(tailscale ip -4 || true)
+          fi
+
+          NGROK_HOST=""
+          if [ -f /tmp/ngrok.log ]; then
+            NGROK_HOST=$(grep -o 'tcp://[-a-zA-Z0-9.:]*' /tmp/ngrok.log | head -n 1 || true)
+          fi
+
+          OS_VERSION=$(sw_vers -productVersion)
+          OS_NAME=$(sw_vers -productName)
+
+          echo "### 🍎 macOS Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
+          echo "- **OS:** ${OS_NAME} ${OS_VERSION} (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Username:** \`runner\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$TS_IP" ]; then
+            echo "#### 🍏 Native Apple Screen Sharing via Tailscale:" >> $GITHUB_STEP_SUMMARY
+            echo "- **Mac Screen Sharing Address:** \`vnc://${TS_IP}:5900\` (or \`vnc://gha-macos-rdp:5900\`)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Quick Connect on Mac:** Press \`Cmd + Space\` -> type \`Screen Sharing\` -> enter \`${TS_IP}\` (Username: \`runner\`, Password: \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -n "$NGROK_HOST" ]; then
+            echo "#### 🔌 Ngrok Public VNC:" >> $GITHUB_STEP_SUMMARY
+            echo "- **VNC Address:** \`${NGROK_HOST#tcp://}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "========================================================"
+          echo ">>> USERNAME: runner"
+          echo ">>> PASSWORD: ${PASS}"
+          if [ -n "$TS_IP" ]; then echo ">>> TAILSCALE VNC: vnc://${TS_IP}:5900"; fi
+          if [ -n "$NGROK_HOST" ]; then echo ">>> NGROK VNC: ${NGROK_HOST#tcp://}"; fi
+          echo "========================================================"
+
+      - name: Keep macOS Runner Alive
+        run: |
+          HOURS="${{ github.event.inputs.session_hours }}"
+          SECONDS_TOTAL=$(awk "BEGIN {print int($HOURS * 3600)}")
+          
+          if [ $SECONDS_TOTAL -gt 20800 ]; then
+            SECONDS_TOTAL=20800
+          fi
+
+          echo "==> macOS session active for $HOURS hours ($SECONDS_TOTAL seconds)."
+          echo "==> To terminate early, click 'Cancel workflow' in GitHub Actions."
+
+          START_TIME=$(date +%s)
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            REMAINING=$((SECONDS_TOTAL - ELAPSED))
+            
+            if [ $REMAINING -le 0 ]; then
+              echo "==> Time limit reached. Shutting down gracefully."
+              break
+            fi
+
+            MINS_LEFT=$((REMAINING / 60))
+            echo "[$MINS_LEFT min remaining] macOS session is running..."
+            sleep 300
+          done
+
+      - name: Tailscale Auto-Cleanup & Machine Removal
+        if: always()
+        run: |
+          if command -v tailscale >/dev/null 2>&1; then
+            echo "==> Automatically logging out and removing macOS runner from Tailscale..."
+            sudo tailscale logout || true
+          fi
