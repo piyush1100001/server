@@ -61,11 +61,13 @@ jobs:
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
             "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
 
-          # Authorize runner user in Screen Sharing Directory Group
-          sudo dseditgroup -o create com.apple.access_screensharing 2>/dev/null || true
-          sudo dseditgroup -o edit -a runner -t user com.apple.access_screensharing 2>/dev/null || true
-          sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
-          sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
+          # Authorize runner user in Screen Sharing Directory Group (non-interactive)
+          if ! dseditgroup com.apple.access_screensharing >/dev/null 2>&1; then
+            echo y | sudo dseditgroup -o create com.apple.access_screensharing 2>/dev/null || true
+          fi
+          echo y | sudo dseditgroup -o edit -a runner -t user com.apple.access_screensharing 2>/dev/null || true
+          echo y | sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
+          echo y | sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
 
           # Grant full privileges to all local users in Remote Management
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsers -bool true
