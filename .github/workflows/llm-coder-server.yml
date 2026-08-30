@@ -39,6 +39,10 @@ jobs:
           # Free up disk space from unused pre-installed packages
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
           
+          # Disable any existing swap before recreating
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /swapfile 2>/dev/null || true
+          
           # Create 8GB NVMe swapfile to guarantee 24GB total addressable memory
           sudo fallocate -l 8G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
           sudo chmod 600 /swapfile
