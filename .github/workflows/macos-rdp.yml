@@ -1,18 +1,14 @@
-name: macOS Remote Desktop
+name: macOS Remote Desktop (RustDesk & Web)
 
 on:
   workflow_dispatch:
     inputs:
-      vnc_password:
-        description: 'macOS & VNC Password'
+      rdp_password:
+        description: 'Password for RustDesk & Web Access'
         required: true
         default: 'Admin@12345'
       tailscale_authkey:
-        description: 'Optional: Tailscale Auth Key (for direct Apple Screen Sharing)'
-        required: false
-        default: ''
-      ngrok_token:
-        description: 'Optional: Ngrok Auth Token (for public TCP port 5900)'
+        description: 'Optional: Tailscale Auth Key (for direct private VPN mesh)'
         required: false
         default: ''
       session_hours:
@@ -22,147 +18,76 @@ on:
 
 jobs:
   macos-rdp:
-    name: macOS Apple Silicon Runner
+    name: macOS Apple Silicon Runner (RustDesk)
     runs-on: macos-latest
     timeout-minutes: 360
 
     steps:
-      - name: Configure Dedicated RDP User & Graphical Auto-Login
+      - name: Install RustDesk & Grant macOS System Permissions
         run: |
-          PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Creating dedicated admin user 'rdpuser' in OpenDirectory with authentic PBKDF2 ShadowHash..."
+          PASS="${{ github.event.inputs.rdp_password }}"
+          echo "==> Resolving latest RustDesk Apple Silicon release..."
           
-          # Directly provision user OpenDirectory plist with Salted SHA512 PBKDF2 binary hash
-          sudo python3 -c "
-          import plistlib, os, hashlib, subprocess
-          passw = b'${PASS}'
-          salt = os.urandom(32)
-          entropy = hashlib.pbkdf2_hmac('sha512', passw, salt, 45000)
-          shadow_plist = plistlib.dumps({'SALTED-SHA512-PBKDF2': {'entropy': entropy, 'salt': salt, 'iterations': 45000}})
-          
-          user_data = {
-              'name': ['rdpuser'],
-              'realname': ['Remote Admin'],
-              'uid': ['550'],
-              'gid': ['20'],
-              'home': ['/Users/rdpuser'],
-              'shell': ['/bin/zsh'],
-              'AuthenticationAuthority': [';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>'],
-              'ShadowHashData': [shadow_plist],
-              '_writers_ShadowHashData': ['rdpuser'],
-              '_writers_passwd': ['rdpuser']
-          }
-          
-          os.makedirs('/Users/rdpuser', exist_ok=True)
-          os.makedirs('/var/db/dslocal/nodes/Default/users', exist_ok=True)
-          
-          plist_path = '/var/db/dslocal/nodes/Default/users/rdpuser.plist'
-          with open(plist_path, 'wb') as f:
-              plistlib.dump(user_data, f, fmt=plistlib.FMT_BINARY)
-          os.chmod(plist_path, 0o600)
-          
-          runner_path = '/var/db/dslocal/nodes/Default/users/runner.plist'
-          if os.path.exists(runner_path):
-              try:
-                  with open(runner_path, 'rb') as f:
-                      rdata = plistlib.load(f)
-                  rdata['ShadowHashData'] = [shadow_plist]
-                  rdata['AuthenticationAuthority'] = [';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>']
-                  with open(runner_path, 'wb') as f:
-                      plistlib.dump(rdata, f, fmt=plistlib.FMT_BINARY)
-                  os.chmod(runner_path, 0o600)
-              except Exception as e:
-                  print('Runner update:', e)
-          
-          subprocess.run(['killall', 'opendirectoryd'], check=False)
-          "
-          sleep 2
+          DMG_URL=""
+          try_count=0
+          while [ -z "$DMG_URL" ] && [ $try_count -lt 5 ]; do
+            DMG_URL=$(curl -fsSL https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep -o 'https://[^"]*aarch64\.dmg' | head -n 1 || true)
+            if [ -z "$DMG_URL" ]; then
+              DMG_URL=$(curl -fsSL https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep -o 'https://[^"]*arm64\.dmg' | head -n 1 || true)
+            fi
+            try_count=$((try_count + 1))
+            sleep 1
+          done
 
-          # Add rdpuser to admin and screensharing groups
-          echo y | sudo dseditgroup -o edit -a rdpuser -t user admin 2>/dev/null || true
-          echo y | sudo dseditgroup -o edit -a rdpuser -t user com.apple.access_screensharing 2>/dev/null || true
-
-          # Configure macOS graphical Auto-Login into Aqua desktop
-          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser rdpuser
-          sudo python3 -c "
-          key = [125, 137, 82, 35, 210, 188, 221, 234, 163, 162, 206, 127]
-          pwd = b'${PASS}'
-          encoded = bytes([b ^ key[i % len(key)] for i, b in enumerate(pwd)])
-          with open('/etc/kcpassword', 'wb') as f:
-              f.write(encoded)
-          "
-          sudo chmod 600 /etc/kcpassword
-
-      - name: Enable Native Apple Screen Sharing & Permissions
-        run: |
-          PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Configuring pure Apple Screen Sharing service..."
-          
-          # Deactivate ARDAgent to eliminate Remote Management vs Screen Sharing conflict
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop 2>/dev/null || true
-
-          # Grant Screen Recording and Accessibility permissions in TCC database
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.screensharing.agent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.ScreenSharing',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.screensharing.agent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-
-          # Authorize rdpuser and runner in Screen Sharing Directory Group
-          if ! dseditgroup com.apple.access_screensharing >/dev/null 2>&1; then
-            echo y | sudo dseditgroup -o create com.apple.access_screensharing 2>/dev/null || true
+          if [ -z "$DMG_URL" ]; then
+            DMG_URL="https://github.com/rustdesk/rustdesk/releases/download/1.4.5/rustdesk-1.4.5-aarch64.dmg"
           fi
-          echo y | sudo dseditgroup -o edit -a rdpuser -t user com.apple.access_screensharing 2>/dev/null || true
-          echo y | sudo dseditgroup -o edit -a runner -t user com.apple.access_screensharing 2>/dev/null || true
-          echo y | sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
-          echo y | sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
 
-          # Enable pure Screen Sharing launch daemon & preferences
-          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
-          sudo defaults write /Library/Preferences/com.apple.preferences.sharing.plist ScreenSharingEnabled -bool true
-          sudo defaults write /Library/Preferences/com.apple.preferences.sharing.plist RemoteManagementEnabled -bool false
-          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist ScreenSharingAllowed -bool true
-          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AuthenticateUsers -bool true
-          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AutoAcceptUsers -bool true
-          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AllowVNCAuth -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCOpenToAll -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCGuestAccess -bool true
-          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt DisableLegacyVNC -bool false
+          echo "==> Downloading RustDesk from: $DMG_URL"
+          curl -fsSL -L "$DMG_URL" -o /tmp/rustdesk.dmg
 
-          # Configure legacy VNC password so standard VNC password login works cleanly
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASS" 2>/dev/null || true
-          
-          # Force start pure screensharing service
-          sudo launchctl load -wF /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-          sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
-          sudo launchctl kickstart -k -p system/com.apple.screensharing 2>/dev/null || true
+          echo "==> Installing RustDesk.app to /Applications..."
+          hdiutil attach /tmp/rustdesk.dmg -mountpoint /Volumes/RustDesk -nobrowse -quiet
+          sudo cp -R /Volumes/RustDesk/RustDesk.app /Applications/
+          hdiutil detach /Volumes/RustDesk -quiet || true
+          rm -f /tmp/rustdesk.dmg
 
-      - name: Setup Web Access & Network Tunnels
+          # Grant full Accessibility, Screen Recording, and Input Monitoring permissions in TCC database
+          echo "==> Injecting macOS TCC Privacy Permissions..."
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServicePostEvent','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+
+      - name: Configure RustDesk & Launch Service
+        run: |
+          PASS="${{ github.event.inputs.rdp_password }}"
+          RUSTDESK_BIN="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          echo "==> Setting static access password..."
+          sudo "$RUSTDESK_BIN" --password "$PASS" 2>/dev/null || true
+
+          echo "==> Starting RustDesk background service..."
+          sudo "$RUSTDESK_BIN" --service > /tmp/rustdesk.log 2>&1 &
+          open -a /Applications/RustDesk.app
+          sleep 5
+
+          echo "==> Retrieving 9-digit RustDesk ID..."
+          RUSTDESK_ID=""
+          for i in {1..20}; do
+            RUSTDESK_ID=$("$RUSTDESK_BIN" --get-id 2>/dev/null | tr -d ' ' | grep -E '^[0-9]+$' | head -n 1 || true)
+            if [ -n "$RUSTDESK_ID" ]; then break; fi
+            sleep 1
+          done
+
+          echo "RUSTDESK_ID=$RUSTDESK_ID" >> $GITHUB_ENV
+          echo "==> Active RustDesk ID: $RUSTDESK_ID"
+
+      - name: Setup Optional Tailscale Network Mesh
         run: |
           TS_KEY="${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
-          NGROK_TOKEN="${{ github.event.inputs.ngrok_token }}"
-
-          echo "==> Installing WebSockify and Cloudflared for 1-Click Browser Access..."
-          # Install websockify via pip3
-          pip3 install --break-system-packages websockify 2>/dev/null || python3 -m pip install websockify 2>/dev/null || true
-
-          # Install official cloudflared for macOS Apple Silicon
-          brew install cloudflared 2>/dev/null || (curl -fsSL -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz | tar -xz -C /tmp 2>/dev/null) || true
-          CLOUDFLARED_BIN=$(command -v cloudflared || echo "/tmp/cloudflared")
-
-          # Clone lightweight noVNC client
-          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
-          
-          # Start websockify proxy on port 6080 -> macOS Apple Screen Sharing (5900)
-          python3 -m websockify --web /tmp/novnc 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
-          sleep 2
-
-          # Start Cloudflare Quick Tunnel for Web access
-          "$CLOUDFLARED_BIN" tunnel --url http://localhost:6080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
-
-          # Setup Tailscale via Homebrew CLI
           if [ -n "$TS_KEY" ]; then
             echo "==> Installing Tailscale for macOS via Homebrew..."
             brew install tailscale
@@ -172,89 +97,46 @@ jobs:
             sudo tailscale up --authkey="$TS_KEY" --hostname="gha-macos-rdp" --accept-routes || echo "Warning: Tailscale auth failed. Check if key is valid."
           fi
 
-          # Setup Ngrok (forward port 5900)
-          if [ -n "$NGROK_TOKEN" ]; then
-            echo "==> Installing Ngrok for macOS..."
-            brew install ngrok/ngrok/ngrok 2>/dev/null || true
-            ngrok config add-authtoken "$NGROK_TOKEN"
-            ngrok tcp 5900 --log=stdout > /tmp/ngrok.log 2>&1 &
-            sleep 3
-          fi
-
       - name: Generate Connection Info & Step Summary
         run: |
-          PASS="${{ github.event.inputs.vnc_password }}"
-          
-          # Extract Cloudflare URL with robust regex loop
-          CF_URL=""
-          for i in {1..30}; do
-            if [ -f /tmp/cloudflared.log ]; then
-              CF_URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
-              if [ -n "$CF_URL" ]; then break; fi
-            fi
-            sleep 1
-          done
+          PASS="${{ github.event.inputs.rdp_password }}"
+          RUSTDESK_ID="${{ env.RUSTDESK_ID }}"
+          OS_VERSION=$(sw_vers -productVersion)
+          OS_NAME=$(sw_vers -productName)
 
           TS_IP=""
           if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
             TS_IP=$(tailscale ip -4 || true)
           fi
 
-          NGROK_HOST=""
-          if [ -f /tmp/ngrok.log ]; then
-            NGROK_HOST=$(grep -o 'tcp://[-a-zA-Z0-9.:]*' /tmp/ngrok.log | head -n 1 || true)
-          fi
-
-          OS_VERSION=$(sw_vers -productVersion)
-          OS_NAME=$(sw_vers -productName)
-          OPTIMIZED_WEB_URL="${CF_URL}/vnc.html?autoconnect=true&resize=scale&quality=6"
-
-          echo "### 🍎 macOS Apple Silicon Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "### 🍎 macOS Apple Silicon Desktop is LIVE (RustDesk)!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ -n "$CF_URL" ]; then
-            echo "#### 🌐 1-Click Fast Web Browser Access (Zero Setup):" >> $GITHUB_STEP_SUMMARY
-            echo "- **👉 [Click Here to Open macOS in Browser](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
-            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "#### 🌐 1-Click Fast Web Browser Access:" >> $GITHUB_STEP_SUMMARY
-            echo "- *Tunnel generation in progress, check logs below.*" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "#### 🌐 1-Click Fast Web Browser Access (Zero Client Installation):" >> $GITHUB_STEP_SUMMARY
+          echo "1. **👉 [Click Here to Open RustDesk Web Client](https://web.rustdesk.com)**" >> $GITHUB_STEP_SUMMARY
+          echo "2. Enter Remote Device ID: **\`${RUSTDESK_ID}\`**" >> $GITHUB_STEP_SUMMARY
+          echo "3. Enter Password: **\`${PASS}\`**" >> $GITHUB_STEP_SUMMARY
+          echo "4. Your **macOS Apple Silicon Desktop** will stream immediately inside your browser!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-          echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
-          echo "- **OS:** ${OS_NAME} ${OS_VERSION} (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Username:** \`rdpuser\` (or \`runner\`)" >> $GITHUB_STEP_SUMMARY
+          echo "#### 📱 Connect via Native RustDesk App (Mac / Windows / iOS / Android):" >> $GITHUB_STEP_SUMMARY
+          echo "- **Download Client:** [rustdesk.com](https://rustdesk.com)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Remote ID:** \`${RUSTDESK_ID}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ -n "$TS_IP" ]; then
-            echo "#### 🍏 Native Apple Screen Sharing via Tailscale:" >> $GITHUB_STEP_SUMMARY
-            echo "- **Mac Screen Sharing Address:** \`vnc://${TS_IP}:5900\` (or \`vnc://gha-macos-rdp:5900\`)" >> $GITHUB_STEP_SUMMARY
-            echo "- **How to connect:** Open Terminal on your Mac and run: \`open vnc://${TS_IP}:5900\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Login:** Username \`rdpuser\`, Password \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [ -n "$NGROK_HOST" ]; then
-            echo "#### 🔌 Ngrok Public VNC:" >> $GITHUB_STEP_SUMMARY
-            echo "- **VNC Address:** \`${NGROK_HOST#tcp://}\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "#### 💻 System Information:" >> $GITHUB_STEP_SUMMARY
+          echo "- **OS:** ${OS_NAME} ${OS_VERSION} (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture:** ARM64 (Apple M-Series)" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$TS_IP" ]; then echo "- **Tailscale Mesh IP:** \`${TS_IP}\`" >> $GITHUB_STEP_SUMMARY; fi
+          echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "========================================================"
-          if [ -n "$CF_URL" ]; then echo ">>> 1-CLICK WEB DESKTOP: ${OPTIMIZED_WEB_URL}"; fi
-          echo ">>> USERNAME: rdpuser (or runner)"
-          echo ">>> PASSWORD: ${PASS}"
-          if [ -n "$TS_IP" ]; then echo ">>> NATIVE SCREEN SHARING: vnc://${TS_IP}:5900"; fi
-          if [ -n "$NGROK_HOST" ]; then echo ">>> NGROK VNC: ${NGROK_HOST#tcp://}"; fi
+          echo ">>> RUSTDESK WEB CLIENT: https://web.rustdesk.com"
+          echo ">>> RUSTDESK DEVICE ID: ${RUSTDESK_ID}"
+          echo ">>> ACCESS PASSWORD: ${PASS}"
+          if [ -n "$TS_IP" ]; then echo ">>> TAILSCALE IP: ${TS_IP}"; fi
           echo "========================================================"
-          
-          echo "==> Cloudflare Tunnel Raw Output:"
-          cat /tmp/cloudflared.log 2>/dev/null || true
-          echo "==> WebSockify Raw Output:"
-          cat /tmp/websockify.log 2>/dev/null || true
 
       - name: Keep macOS Runner Alive
         run: |

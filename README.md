@@ -11,11 +11,19 @@ This repository provides an automated, high-performance **60 FPS cloud desktop s
 
 ## 🖥️ Supported Operating Systems
 
-| OS / Desktop | 60 FPS Moonlight / Sunshine | Native RDP / App | 1-Click Web Access |
-| :--- | :--- | :--- | :--- |
-| **🐧 Ubuntu 24.04 LTS (XFCE)** | ✅ **Yes (Port 47989/47990)** | ✅ XRDP (`:3389`) | ✅ noVNC (`trycloudflare.com`) |
-| **🪟 Windows Server 2025** | ✅ **Yes (Port 47989/47990)** | ✅ Microsoft RDP (`:3389`) | ❌ N/A |
-| **🍎 macOS Apple Silicon** | ⚠️ VM Capture Limits | ✅ Screen Sharing (`:5900`) | ✅ noVNC (`trycloudflare.com`) |
+| OS / Desktop | 60 FPS Moonlight / Sunshine | RustDesk (Web + App) | Native RDP / VNC | 1-Click Web Access |
+| :--- | :--- | :--- | :--- | :--- |
+| **🍎 macOS Apple Silicon** | ❌ | ✅ **Yes (9-digit ID)** | ❌ (Apple Lock) | ✅ **[web.rustdesk.com](https://web.rustdesk.com)** |
+| **🐧 Ubuntu 24.04 LTS (XFCE)** | ✅ **Yes (Port 47989/47990)** | ❌ | ✅ XRDP (`:3389`) | ✅ noVNC (`trycloudflare.com`) |
+| **🪟 Windows Server 2025** | ✅ **Yes (Port 47989/47990)** | ❌ | ✅ Microsoft RDP (`:3389`) | ❌ N/A |
+
+---
+
+## 🍎 How to Access macOS with RustDesk (Web & App):
+1. Launch **macOS Remote Desktop** in **Actions** (provide your password).
+2. Open the **Summary tab** to get your **RustDesk Device ID** (e.g. `123 456 789`).
+3. **Web Browser Access (Zero Client Install):** Open **[web.rustdesk.com](https://web.rustdesk.com)** in Safari/Chrome, enter the Device ID and password, and stream macOS directly in your browser!
+4. **Native App:** Or download the free **[RustDesk](https://rustdesk.com)** client for Mac, Windows, iOS, or Android.
 
 ---
 
