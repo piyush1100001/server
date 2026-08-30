@@ -436,6 +436,18 @@ jobs:
             sleep 1
           done
 
+          # Wait for Cloudflare global DNS propagation
+          if [ -n "$CF_URL" ]; then
+            echo "==> Waiting for Cloudflare global DNS propagation..."
+            for j in {1..15}; do
+              if curl -fsSL -o /dev/null "$CF_URL/" 2>/dev/null; then
+                echo "==> Cloudflare tunnel verified live!"
+                break
+              fi
+              sleep 1
+            done
+          fi
+
           TS_IP=""
           if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
             TS_IP=$(tailscale ip -4 || true)
