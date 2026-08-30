@@ -190,6 +190,12 @@ jobs:
           sleep 2
 
           echo "==> Configuring & Launching Sunshine 60 FPS Server..."
+          # Grant full write access to Linux uinput device for mouse, keyboard, and gamepad emulation
+          sudo modprobe uinput 2>/dev/null || true
+          sudo chmod 0666 /dev/uinput 2>/dev/null || true
+          sudo usermod -aG input runner 2>/dev/null || true
+          sudo setfacl -m u:runner:rw /dev/uinput 2>/dev/null || true
+
           TS_IP=$(tailscale ip -4 2>/dev/null || true)
           mkdir -p ~/.config/sunshine
           
@@ -209,8 +215,8 @@ jobs:
           EOF
           sed -i 's/^[ \t]*//' ~/.config/sunshine/sunshine.conf
 
-          # Start Sunshine background daemon
-          sunshine ~/.config/sunshine/sunshine.conf > /tmp/sunshine.log 2>&1 &
+          # Start Sunshine background daemon with X11 display context
+          DISPLAY=:1 sunshine ~/.config/sunshine/sunshine.conf > /tmp/sunshine.log 2>&1 &
           sleep 3
 
       - name: Launch Cloudflare Quick Tunnel & Extract Access Link
@@ -256,6 +262,7 @@ jobs:
             echo "3. Open Sunshine Web Dashboard in browser: **[https://${TS_IP}:47990](https://${TS_IP}:47990)** (Log in with User: \`admin\`, Pass: \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
             echo "4. Go to **PIN** tab in Sunshine -> Enter the 4-digit PIN -> Click **Send**." >> $GITHUB_STEP_SUMMARY
             echo "5. Click **Desktop** in Moonlight for instant **60 FPS audio & video**!" >> $GITHUB_STEP_SUMMARY
+            echo "6. 💡 **Touchpad / Mouse Control:** Press \`Ctrl+Alt+Shift+C\` (or \`Cmd+Option+Shift+C\` on Mac) to capture/release mouse pointer in Moonlight." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
