@@ -48,11 +48,24 @@ jobs:
           net user runneradmin ${{ github.event.inputs.rdp_password }}
           net user runneradmin /active:yes
 
-      - name: Setup Network Tunnels (Tailscale & Ngrok)
+      - name: Setup Sunshine 60 FPS Server & Network Tunnels
         shell: powershell
         run: |
+          $Password = "${{ github.event.inputs.rdp_password }}"
           $TS_KEY = "${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
           $NGROK_TOKEN = "${{ github.event.inputs.ngrok_token }}"
+
+          Write-Host "==> Downloading and installing Sunshine 60 FPS Streaming Server for Windows..."
+          Invoke-WebRequest -Uri "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe" -OutFile "$env:TEMP\sunshine-installer.exe"
+          Start-Process -FilePath "$env:TEMP\sunshine-installer.exe" -ArgumentList "/S" -Wait
+          Start-Sleep -Seconds 3
+
+          $SunshineExe = "C:\Program Files\Sunshine\sunshine.exe"
+          if (Test-Path $SunshineExe) {
+            Write-Host "==> Setting Sunshine credentials and starting service..."
+            & $SunshineExe --creds admin $Password
+            Start-Process -FilePath $SunshineExe -WindowStyle Hidden
+          }
 
           # Setup Tailscale if key is provided
           if ($TS_KEY -ne "") {
@@ -99,21 +112,29 @@ jobs:
           }
 
           $Summary = @(
-            "### Windows Server Remote Desktop is LIVE!"
-            ""
-            "#### System Credentials:"
-            "- **Username:** ``runneradmin``"
-            "- **Password:** ``$Password``"
-            "- **OS:** Windows Server Datacenter"
+            "### Windows Server 60 FPS Remote Desktop is LIVE!"
             ""
           )
 
           if ($TS_IP -ne "") {
-            $Summary += "#### Tailscale Direct RDP (Recommended):"
+            $Summary += "#### 60 FPS Moonlight / Sunshine Streaming (Lowest Latency):"
+            $Summary += "1. Open Moonlight App on your Mac/Windows -> Click Add Host (+) -> Enter: ``$TS_IP``"
+            $Summary += "2. Moonlight will display a 4-digit PIN."
+            $Summary += "3. Open Sunshine Web Dashboard in browser: https://$TS_IP:47990 (Log in with User: ``admin``, Pass: ``$Password``)"
+            $Summary += "4. Go to PIN tab in Sunshine -> Enter the 4-digit PIN -> Click Send."
+            $Summary += "5. Click Desktop in Moonlight for instant 60 FPS streaming!"
+            $Summary += ""
+            $Summary += "#### Native Microsoft Remote Desktop:"
             $Summary += "- **PC Name / Address:** ``$TS_IP:3389`` (or ``gha-windows-rdp:3389``)"
-            $Summary += "- *Use Microsoft Remote Desktop on Mac or Windows.*"
             $Summary += ""
           }
+
+          $Summary += "#### System Credentials:"
+          $Summary += "- **Username:** ``runneradmin``"
+          $Summary += "- **Password:** ``$Password``"
+          $Summary += "- **Sunshine Web UI:** https://$TS_IP:47990 (User: ``admin``, Pass: ``$Password``)"
+          $Summary += "- **OS:** Windows Server Datacenter"
+          $Summary += ""
 
           if ($NGROK_HOST -ne "") {
             $Summary += "#### Ngrok Public RDP:"
@@ -121,18 +142,13 @@ jobs:
             $Summary += ""
           }
 
-          if ($TS_IP -eq "" -and $NGROK_HOST -eq "") {
-            $Summary += "> [!WARNING]"
-            $Summary += "> Neither Tailscale Auth Key nor Ngrok Token was provided. Provide a Tailscale key or Ngrok token to connect."
-          }
-
           $Summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
           Write-Host "========================================================"
+          if ($TS_IP -ne "") { Write-Host ">>> MOONLIGHT HOST: $TS_IP" }
+          if ($TS_IP -ne "") { Write-Host ">>> SUNSHINE WEB UI: https://$TS_IP:47990" }
           Write-Host ">>> USERNAME: runneradmin"
           Write-Host ">>> PASSWORD: $Password"
-          if ($TS_IP -ne "") { Write-Host ">>> TAILSCALE RDP ADDRESS: $TS_IP:3389" }
-          if ($NGROK_HOST -ne "") { Write-Host ">>> NGROK RDP ADDRESS: $NGROK_HOST" }
           Write-Host "========================================================"
 
       - name: Keep Windows Runner Alive

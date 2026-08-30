@@ -128,8 +128,13 @@ jobs:
             chmod +x ~/Desktop/google-chrome.desktop
           fi
 
-      - name: Install Cloudflared & Network Tunnels
+      - name: Install Sunshine Server & Remote Streaming Tools
         run: |
+          echo "==> Downloading and installing Sunshine 60 FPS streaming server for Ubuntu 24.04..."
+          wget -q -O /tmp/sunshine.deb https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-ubuntu-24.04-amd64.deb
+          sudo apt-get install -y /tmp/sunshine.deb || sudo apt-get install -fy
+          rm -f /tmp/sunshine.deb
+
           echo "==> Installing Cloudflared..."
           curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
           sudo dpkg -i /tmp/cloudflared.deb
@@ -152,20 +157,25 @@ jobs:
             sudo tailscale up --authkey="$TS_KEY" --hostname="gha-ubuntu-xfce" --accept-routes
           fi
 
-      - name: Start XFCE Desktop & Remote Services
+      - name: Start XFCE Desktop, Sunshine 60 FPS & Remote Services
         run: |
+          PASS="${{ github.event.inputs.vnc_password }}"
           RES="${{ github.event.inputs.screen_resolution }}"
+          
           echo "==> Launching optimized Xvfb virtual display on :1 with resolution $RES..."
-          Xvfb :1 -screen 0 ${RES}x24 +extension GLX +extension MIT-SHM +render -noreset &
+          Xvfb :1 -screen 0 ${RES}x24 +extension GLX +extension MIT-SHM +extension RANDR +render -noreset &
           export DISPLAY=:1
           sleep 1
+
+          # Start PulseAudio dummy sink for crystal-clear Moonlight audio
+          pulseaudio --start 2>/dev/null || true
+          pactl load-module module-null-sink sink_name=dummy 2>/dev/null || true
 
           echo "==> Launching XFCE session..."
           startxfce4 > /tmp/xfce.log 2>&1 &
           sleep 2
 
           echo "==> Starting ultra-low latency x11vnc server on port 5900..."
-          # Low latency flags: wait 5ms, defer 5ms, client-side cursor, fast speed profile
           x11vnc -display :1 -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg \
             -wait 5 \
             -defer 5 \
@@ -178,6 +188,23 @@ jobs:
           echo "==> Starting noVNC / WebSockify on port 6080..."
           /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
           sleep 2
+
+          echo "==> Configuring & Launching Sunshine 60 FPS Server..."
+          mkdir -p ~/.config/sunshine
+          cat << 'EOF' > ~/.config/sunshine/sunshine.conf
+          origin_web_ui_allowed = wan
+          min_threads = 2
+          encoder = software
+          address = 0.0.0.0
+          EOF
+          sed -i 's/^[ \t]*//' ~/.config/sunshine/sunshine.conf
+
+          # Set Sunshine Web UI credentials (admin / password)
+          sunshine --creds admin "$PASS" 2>/dev/null || true
+
+          # Start Sunshine background daemon
+          sunshine ~/.config/sunshine/sunshine.conf > /tmp/sunshine.log 2>&1 &
+          sleep 3
 
       - name: Launch Cloudflare Quick Tunnel & Extract Access Link
         run: |
@@ -204,48 +231,48 @@ jobs:
           fi
 
           PASS="${{ github.event.inputs.vnc_password }}"
-          # Optimized noVNC direct URL with auto-connect, local scaling, and fast compression
+          TS_IP=""
+          if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
+            TS_IP=$(tailscale ip -4 || true)
+          fi
+
           OPTIMIZED_WEB_URL="${CF_URL}/vnc.html?autoconnect=true&resize=scale&quality=6&compression=2"
 
           # Output connection details to GitHub Step Summary
-          echo "### 🚀 Ubuntu 24.04 XFCE Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Ubuntu 24.04 60 FPS Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "$TS_IP" ]; then
+            echo "#### 🌙 60 FPS Moonlight / Sunshine Streaming (Lowest Latency):" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Open Moonlight App** on your Mac/Windows/iPad -> Click **Add Host (+)** -> Enter: \`${TS_IP}\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. Moonlight will give you a **4-digit PIN**." >> $GITHUB_STEP_SUMMARY
+            echo "3. Open Sunshine Web Dashboard in browser: **[https://${TS_IP}:47990](https://${TS_IP}:47990)** (Log in with User: \`admin\`, Pass: \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
+            echo "4. Go to **PIN** tab in Sunshine -> Enter the 4-digit PIN -> Click **Send**." >> $GITHUB_STEP_SUMMARY
+            echo "5. Click **Desktop** in Moonlight for instant **60 FPS audio & video**!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "#### 🌐 1-Click Fast Web Browser Access:" >> $GITHUB_STEP_SUMMARY
           if [ -n "$CF_URL" ]; then
-            echo "- **👉 [Click Here to Open Desktop](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **👉 [Click Here to Open Desktop in Browser](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
             echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "- *Tunnel generation in progress, check raw logs below.*" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Username:** \`runner\` (or \`root\`)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Desktop Environment:** XFCE4 (Ultra Low Latency + Arc-Dark)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Screen Resolution:** \`${{ github.event.inputs.screen_resolution }}\`" >> $GITHUB_STEP_SUMMARY
+
+          echo "#### 💻 Credentials & Access:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sunshine Web UI:** \`https://${TS_IP}:47990\` (User: \`admin\`, Pass: \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- **System User:** \`runner\` (Pass: \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Native Microsoft RDP (XRDP):** \`${TS_IP}:3389\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ -n "$NGROK_HOST" ]; then
-            echo "#### 🔌 Native Microsoft Remote Desktop (XRDP via Ngrok):" >> $GITHUB_STEP_SUMMARY
-            echo "- **RDP Address:** \`${NGROK_HOST#tcp://}\`" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
-            TS_IP=$(tailscale ip -4 || true)
-            echo "#### 🛡️ Tailscale Native Microsoft RDP:" >> $GITHUB_STEP_SUMMARY
-            echo "- **PC Name / Address:** \`${TS_IP}:3389\` (or \`gha-ubuntu-xfce:3389\`)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Username:** \`runner\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "--------------------------------------------------------"
-          echo ">>> 1-CLICK DESKTOP LINK: ${OPTIMIZED_WEB_URL}"
-          echo ">>> USERNAME: runner"
+          echo "========================================================"
+          if [ -n "$TS_IP" ]; then echo ">>> MOONLIGHT HOST: ${TS_IP}"; fi
+          if [ -n "$TS_IP" ]; then echo ">>> SUNSHINE WEB UI: https://${TS_IP}:47990"; fi
+          echo ">>> 1-CLICK WEB LINK: ${OPTIMIZED_WEB_URL}"
           echo ">>> PASSWORD: ${PASS}"
-          if [ -n "$NGROK_HOST" ]; then
-            echo ">>> NGROK RDP ADDRESS: ${NGROK_HOST#tcp://}"
-          fi
-          echo "--------------------------------------------------------"
+          echo "========================================================"
 
       - name: Keep Runner Alive
         run: |
