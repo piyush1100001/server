@@ -66,13 +66,20 @@ jobs:
           PASS="${{ github.event.inputs.rdp_password }}"
           RUSTDESK_BIN="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
-          echo "==> Setting static access password..."
-          sudo "$RUSTDESK_BIN" --password "$PASS" 2>/dev/null || true
+          # Pre-create RustDesk application support configuration directories
+          mkdir -p ~/Library/Application\ Support/RustDesk/config
+          sudo mkdir -p /Library/Application\ Support/RustDesk/config
+          sudo mkdir -p /root/Library/Application\ Support/RustDesk/config 2>/dev/null || true
 
           echo "==> Starting RustDesk background service..."
           sudo "$RUSTDESK_BIN" --service > /tmp/rustdesk.log 2>&1 &
           open -a /Applications/RustDesk.app
-          sleep 5
+          sleep 4
+
+          echo "==> Setting static access password..."
+          sudo "$RUSTDESK_BIN" --password "$PASS" 2>/dev/null || true
+          "$RUSTDESK_BIN" --password "$PASS" 2>/dev/null || true
+          sleep 1
 
           echo "==> Retrieving 9-digit RustDesk ID..."
           RUSTDESK_ID=""
