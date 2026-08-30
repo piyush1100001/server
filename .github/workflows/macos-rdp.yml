@@ -52,14 +52,23 @@ jobs:
           hdiutil detach /Volumes/RustDesk -quiet || true
           rm -f /tmp/rustdesk.dmg
 
-          # Grant full Accessibility, Screen Recording, and Input Monitoring permissions in TCC database
-          echo "==> Injecting macOS TCC Privacy Permissions..."
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServicePostEvent','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          # Grant full Accessibility, Screen Recording, and Input Monitoring permissions across all TCC databases
+          echo "==> Injecting macOS TCC Privacy Permissions across User, Root, and System databases..."
+          for tcc_path in \
+            "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
+            "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "/var/root/Library/Application Support/com.apple.TCC/TCC.db"; do
+            
+            sudo mkdir -p "$(dirname "$tcc_path")" 2>/dev/null || true
+            sudo sqlite3 "$tcc_path" "CREATE TABLE IF NOT EXISTS access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, policy_subrequest BLOB, indirect_object_identifier_type INTEGER, indirect_object_identifier TEXT, indirect_object_code_identity BLOB, flags INTEGER, last_modified INTEGER NOT NULL, PRIMARY KEY (service, client, client_type));" 2>/dev/null || true
+            sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+            sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+            sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServicePostEvent','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+            sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServiceListenEvent','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          done
+
+          # Prevent display sleep and keep virtual display compositor awake
+          caffeinate -d -i -m -u &
 
       - name: Configure RustDesk & Launch Service
         run: |
