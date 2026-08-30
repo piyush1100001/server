@@ -62,18 +62,21 @@ jobs:
           "
           sudo chmod 600 /etc/kcpassword
 
-      - name: Enable Apple Screen Sharing (VNC / ARD) & Permissions
+      - name: Enable Native Apple Screen Sharing & Permissions
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Enabling Apple Remote Desktop & Screen Sharing..."
+          echo "==> Configuring pure Apple Screen Sharing service..."
           
+          # Deactivate ARDAgent to eliminate Remote Management vs Screen Sharing conflict
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop 2>/dev/null || true
+
           # Grant Screen Recording and Accessibility permissions in TCC database
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
             "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.screensharing.agent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.ScreenSharing',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.screensharing.agent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
 
           # Authorize rdpuser and runner in Screen Sharing Directory Group
           if ! dseditgroup com.apple.access_screensharing >/dev/null 2>&1; then
@@ -84,24 +87,14 @@ jobs:
           echo y | sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
           echo y | sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
 
-          # Grant full privileges to all local users in Remote Management
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsers -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsersPrivs -int -1073741569
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCOpenToAll -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCAlwaysNotifyOnDemand -bool false
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCGuestAccess -bool true
+          # Enable pure Screen Sharing launch daemon & preferences
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist ScreenSharingAllowed -bool true
+          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AuthenticateUsers -bool true
           
-          # Run Kickstart to activate ARD and enable VNC legacy mode
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate \
-            -configure -allowAccessFor -allUsers -privs -all \
-            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASS" \
-            -restart -agent -console || true
-
-          # Force start screensharing service
+          # Force start pure screensharing service
           sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
-          sudo launchctl kickstart -kp system/com.apple.screensharing 2>/dev/null || true
+          sudo launchctl kickstart -k -p system/com.apple.screensharing 2>/dev/null || true
 
       - name: Setup Web Access & Network Tunnels
         run: |
