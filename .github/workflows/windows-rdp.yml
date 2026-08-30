@@ -60,27 +60,8 @@ jobs:
           Start-Process -FilePath "$env:TEMP\sunshine-installer.exe" -ArgumentList "/S" -Wait
           Start-Sleep -Seconds 3
 
-          $SunshineExe = "C:\Program Files\Sunshine\sunshine.exe"
-          if (Test-Path $SunshineExe) {
-            Write-Host "==> Configuring Sunshine settings and credentials..."
-            $SunshineConfigDir = "C:\Program Files\Sunshine\config"
-            New-Item -ItemType Directory -Force -Path $SunshineConfigDir | Out-Null
-            $Conf = @(
-              "origin_web_ui_allowed = wan"
-              "origin_pin_allowed = wan"
-              "csrf_allowed_origins = [""*""]"
-              "min_threads = 2"
-              "address = 0.0.0.0"
-              "port = 47989"
-              "web_port = 47990"
-            )
-            $Conf | Out-File -FilePath "$SunshineConfigDir\sunshine.conf" -Encoding utf8
-            
-            & $SunshineExe --creds admin $Password
-            Start-Process -FilePath $SunshineExe -WindowStyle Hidden
-          }
-
           # Setup Tailscale if key is provided
+          $TS_IP = ""
           if ($TS_KEY -ne "") {
             Write-Host "==> Installing Tailscale for Windows..."
             Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "$env:TEMP\tailscale-setup.exe"
@@ -91,7 +72,28 @@ jobs:
               Write-Host "==> Connecting Tailscale mesh network..."
               & $TailscaleExe up --authkey=$TS_KEY --hostname="gha-windows-rdp" --accept-routes
               Start-Sleep -Seconds 5
+              $TS_IP = (& $TailscaleExe ip -4).Trim()
             }
+          }
+
+          $SunshineExe = "C:\Program Files\Sunshine\sunshine.exe"
+          if (Test-Path $SunshineExe) {
+            Write-Host "==> Configuring Sunshine settings and credentials with Tailscale IP ($TS_IP)..."
+            $SunshineConfigDir = "C:\Program Files\Sunshine\config"
+            New-Item -ItemType Directory -Force -Path $SunshineConfigDir | Out-Null
+            $Conf = @(
+              "origin_web_ui_allowed = wan"
+              "origin_pin_allowed = wan"
+              "csrf_allowed_origins = [ ""https://localhost:47990"", ""https://127.0.0.1:47990"", ""https://$TS_IP:47990"", ""http://$TS_IP:47990"", ""https://gha-windows-rdp:47990"", ""http://gha-windows-rdp:47990"", ""*"" ]"
+              "min_threads = 2"
+              "address = 0.0.0.0"
+              "port = 47989"
+              "web_port = 47990"
+            )
+            $Conf | Out-File -FilePath "$SunshineConfigDir\sunshine.conf" -Encoding utf8
+            
+            & $SunshineExe --creds admin $Password
+            Start-Process -FilePath $SunshineExe -WindowStyle Hidden
           }
 
           # Setup Ngrok if token is provided
