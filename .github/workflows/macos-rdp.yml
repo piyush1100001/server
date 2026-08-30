@@ -30,14 +30,26 @@ jobs:
       - name: Configure Dedicated RDP User & Graphical Auto-Login
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Creating dedicated admin user 'rdpuser' for Screen Sharing..."
+          echo "==> Creating dedicated admin user 'rdpuser' in OpenDirectory..."
           
-          # Create dedicated macOS admin user with verified password
-          sudo sysadminctl -deleteUser rdpuser 2>/dev/null || true
-          sudo sysadminctl -addUser rdpuser -fullName "Remote Admin" -password "$PASS" -admin 2>/dev/null || true
+          # Delete any old record if present
+          sudo dscl . -delete /Users/rdpuser 2>/dev/null || true
           
-          # Also set runner password via dscl
-          sudo dscl . -passwd /Users/runner "$PASS" 2>/dev/null || true
+          # Create fresh OpenDirectory record
+          sudo dscl . -create /Users/rdpuser
+          sudo dscl . -create /Users/rdpuser UserShell /bin/zsh
+          sudo dscl . -create /Users/rdpuser RealName "Remote Admin"
+          sudo dscl . -create /Users/rdpuser UniqueID 550
+          sudo dscl . -create /Users/rdpuser PrimaryGroupID 20
+          sudo dscl . -create /Users/rdpuser NFSHomeDirectory /Users/rdpuser
+          sudo mkdir -p /Users/rdpuser
+          sudo chown -R 550:20 /Users/rdpuser
+          
+          # Set password directly in OpenDirectory
+          sudo dscl . -passwd /Users/rdpuser "$PASS"
+
+          # Add rdpuser to admin and screensharing groups
+          echo y | sudo dseditgroup -o edit -a rdpuser -t user admin 2>/dev/null || true
 
           # Configure macOS graphical Auto-Login into Aqua desktop
           sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser rdpuser
