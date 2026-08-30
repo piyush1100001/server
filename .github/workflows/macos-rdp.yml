@@ -92,7 +92,12 @@ jobs:
           NGROK_TOKEN="${{ github.event.inputs.ngrok_token }}"
 
           echo "==> Installing WebSockify and Cloudflared for 1-Click Browser Access..."
-          brew install websockify cloudflare/cloudflare/cloudflared 2>/dev/null || true
+          # Install websockify via pip3
+          pip3 install --break-system-packages websockify 2>/dev/null || python3 -m pip install websockify 2>/dev/null || true
+
+          # Download official cloudflared binary for macOS Apple Silicon
+          sudo curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64 -o /usr/local/bin/cloudflared 2>/dev/null || true
+          sudo chmod +x /usr/local/bin/cloudflared 2>/dev/null || true
 
           # Clone lightweight noVNC client
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
@@ -111,7 +116,7 @@ jobs:
             echo "==> Starting Tailscale daemon..."
             sudo brew services start tailscale
             sleep 4
-            sudo tailscale up --authkey="$TS_KEY" --hostname="gha-macos-rdp" --accept-routes
+            sudo tailscale up --authkey="$TS_KEY" --hostname="gha-macos-rdp" --accept-routes || echo "Warning: Tailscale auth failed. Check if key is valid."
           fi
 
           # Setup Ngrok (forward port 5900)
