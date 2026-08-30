@@ -89,10 +89,16 @@ jobs:
 
           # Enable pure Screen Sharing launch daemon & preferences
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          sudo defaults write /Library/Preferences/com.apple.preferences.sharing.plist ScreenSharingEnabled -bool true
+          sudo defaults write /Library/Preferences/com.apple.preferences.sharing.plist RemoteManagementEnabled -bool false
           sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist ScreenSharingAllowed -bool true
           sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AuthenticateUsers -bool true
+          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AutoAcceptUsers -bool true
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCOpenToAll -bool true
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCGuestAccess -bool true
           
           # Force start pure screensharing service
+          sudo launchctl load -wF /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
           sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
           sudo launchctl kickstart -k -p system/com.apple.screensharing 2>/dev/null || true
 
