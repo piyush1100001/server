@@ -89,6 +89,7 @@ jobs:
                 if ($TS_IP -ne "") { break }
               }
               Write-Host "==> Tailscale IP assigned: $TS_IP"
+              "TS_IP=$TS_IP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             }
           }
 
@@ -103,10 +104,33 @@ jobs:
             # Set credentials first
             & $SunshineExe --creds admin $Password
 
+            # Gather all network interface IPv4 addresses for CSRF allowed origins
+            $AllIPs = @()
+            try {
+              $AllIPs += (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress)
+            } catch {}
+            if ($TS_IP -ne "") { $AllIPs += $TS_IP }
+
+            $Origins = @(
+              "https://localhost:47990",
+              "http://localhost:47990",
+              "https://127.0.0.1:47990",
+              "http://127.0.0.1:47990",
+              "https://gha-windows-rdp:47990",
+              "http://gha-windows-rdp:47990"
+            )
+            foreach ($ip in $AllIPs) {
+              if ($ip -and $ip -ne "127.0.0.1") {
+                $Origins += "https://${ip}:47990"
+                $Origins += "http://${ip}:47990"
+              }
+            }
+            $OriginsStr = ($Origins | Select-Object -Unique) -join ","
+
             $ConfLines = @(
               "origin_web_ui_allowed = wan,lan,pc",
               "origin_pin_allowed = wan,lan,pc",
-              "csrf_allowed_origins = https://$TS_IP:47990,http://$TS_IP:47990,https://localhost:47990,http://localhost:47990,https://127.0.0.1:47990,https://gha-windows-rdp:47990",
+              "csrf_allowed_origins = $OriginsStr",
               "min_threads = 2",
               "address = 0.0.0.0",
               "port = 47989",
@@ -155,11 +179,12 @@ jobs:
         run: |
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           $Password = "${{ github.event.inputs.rdp_password }}"
-          $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
-          $TS_IP = ""
-
-          if (Test-Path $TailscaleExe) {
-            $TS_IP = (& $TailscaleExe ip -4).Trim()
+          $TS_IP = "$env:TS_IP"
+          if (-not $TS_IP -or $TS_IP -eq "") {
+            $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
+            if (Test-Path $TailscaleExe) {
+              $TS_IP = (& $TailscaleExe ip -4 2>$null).Trim()
+            }
           }
 
           $NGROK_HOST = ""
@@ -179,19 +204,19 @@ jobs:
             $Summary += "#### 60 FPS Moonlight / Sunshine Streaming (Lowest Latency):"
             $Summary += "1. Open Moonlight App on your Mac/Windows -> Click Add Host (+) -> Enter: ``$TS_IP``"
             $Summary += "2. Moonlight will display a 4-digit PIN."
-            $Summary += "3. Open Sunshine Web Dashboard in browser: https://$TS_IP:47990 (Log in with User: ``admin``, Pass: ``$Password``)"
+            $Summary += "3. Open Sunshine Web Dashboard in browser: https://$($TS_IP):47990 (Log in with User: ``admin``, Pass: ``$Password``)"
             $Summary += "4. Go to PIN tab in Sunshine -> Enter the 4-digit PIN -> Click Send."
             $Summary += "5. Click Desktop in Moonlight for instant 60 FPS streaming!"
             $Summary += ""
             $Summary += "#### Native Microsoft Remote Desktop:"
-            $Summary += "- **PC Name / Address:** ``$TS_IP:3389`` (or ``gha-windows-rdp:3389``)"
+            $Summary += "- **PC Name / Address:** ``$($TS_IP):3389`` (or ``gha-windows-rdp:3389``)"
             $Summary += ""
           }
 
           $Summary += "#### System Credentials:"
           $Summary += "- **Username:** ``runneradmin``"
           $Summary += "- **Password:** ``$Password``"
-          $Summary += "- **Sunshine Web UI:** https://$TS_IP:47990 (User: ``admin``, Pass: ``$Password``)"
+          $Summary += "- **Sunshine Web UI:** https://$($TS_IP):47990 (User: ``admin``, Pass: ``$Password``)"
           $Summary += "- **OS:** Windows Server Datacenter"
           $Summary += ""
 
@@ -205,7 +230,7 @@ jobs:
 
           Write-Host "========================================================"
           if ($TS_IP -ne "") { Write-Host ">>> MOONLIGHT HOST: $TS_IP" }
-          if ($TS_IP -ne "") { Write-Host ">>> SUNSHINE WEB UI: https://$TS_IP:47990" }
+          if ($TS_IP -ne "") { Write-Host ">>> SUNSHINE WEB UI: https://$($TS_IP):47990" }
           Write-Host ">>> USERNAME: runneradmin"
           Write-Host ">>> PASSWORD: $Password"
           Write-Host "========================================================"
