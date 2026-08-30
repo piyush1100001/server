@@ -149,18 +149,19 @@ jobs:
           pip3 install --break-system-packages websockify 2>/dev/null || python3 -m pip install websockify 2>/dev/null || true
 
           # Download official cloudflared binary for macOS Apple Silicon
-          sudo curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64 -o /usr/local/bin/cloudflared 2>/dev/null || true
-          sudo chmod +x /usr/local/bin/cloudflared 2>/dev/null || true
+          sudo curl -fsSL -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64 -o /opt/homebrew/bin/cloudflared 2>/dev/null || true
+          sudo chmod +x /opt/homebrew/bin/cloudflared 2>/dev/null || true
+          sudo ln -sf /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared 2>/dev/null || true
 
           # Clone lightweight noVNC client
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
           
           # Start websockify proxy on port 6080 -> macOS Apple Screen Sharing (5900)
-          websockify --web /tmp/novnc 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
+          python3 -m websockify --web /tmp/novnc 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
           sleep 2
 
           # Start Cloudflare Quick Tunnel for Web access
-          cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          /opt/homebrew/bin/cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
 
           # Setup Tailscale via Homebrew CLI
           if [ -n "$TS_KEY" ]; then
@@ -185,9 +186,9 @@ jobs:
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
           
-          # Extract Cloudflare URL if available
+          # Extract Cloudflare URL with robust regex loop
           CF_URL=""
-          for i in {1..25}; do
+          for i in {1..30}; do
             if [ -f /tmp/cloudflared.log ]; then
               CF_URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
               if [ -n "$CF_URL" ]; then break; fi
@@ -216,6 +217,10 @@ jobs:
             echo "#### 🌐 1-Click Fast Web Browser Access (Zero Setup):" >> $GITHUB_STEP_SUMMARY
             echo "- **👉 [Click Here to Open macOS in Browser](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
             echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "#### 🌐 1-Click Fast Web Browser Access:" >> $GITHUB_STEP_SUMMARY
+            echo "- *Tunnel generation in progress, check logs below.*" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -246,6 +251,11 @@ jobs:
           if [ -n "$TS_IP" ]; then echo ">>> NATIVE SCREEN SHARING: vnc://${TS_IP}:5900"; fi
           if [ -n "$NGROK_HOST" ]; then echo ">>> NGROK VNC: ${NGROK_HOST#tcp://}"; fi
           echo "========================================================"
+          
+          echo "==> Cloudflare Tunnel Raw Output:"
+          cat /tmp/cloudflared.log 2>/dev/null || true
+          echo "==> WebSockify Raw Output:"
+          cat /tmp/websockify.log 2>/dev/null || true
 
       - name: Keep macOS Runner Alive
         run: |
