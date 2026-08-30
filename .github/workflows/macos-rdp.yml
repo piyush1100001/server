@@ -87,6 +87,12 @@ jobs:
           echo y | sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
           echo y | sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
 
+          # Set valid AuthenticationAuthority and password for runner and rdpuser
+          sudo dscl . -create /Users/runner AuthenticationAuthority ';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>' 2>/dev/null || true
+          sudo dscl . -passwd /Users/runner "$PASS" 2>/dev/null || true
+          sudo dscl . -create /Users/rdpuser AuthenticationAuthority ';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>' 2>/dev/null || true
+          sudo dscl . -passwd /Users/rdpuser "$PASS" 2>/dev/null || true
+
           # Enable pure Screen Sharing launch daemon & preferences
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           sudo defaults write /Library/Preferences/com.apple.preferences.sharing.plist ScreenSharingEnabled -bool true
@@ -94,8 +100,14 @@ jobs:
           sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist ScreenSharingAllowed -bool true
           sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AuthenticateUsers -bool true
           sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AutoAcceptUsers -bool true
+          sudo defaults write /Library/Preferences/com.apple.ScreenSharing.plist AllowVNCAuth -bool true
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCOpenToAll -bool true
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCGuestAccess -bool true
+          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt DisableLegacyVNC -bool false
+
+          # Configure legacy VNC password so standard VNC password login works cleanly
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASS" 2>/dev/null || true
           
           # Force start pure screensharing service
           sudo launchctl load -wF /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
