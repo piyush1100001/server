@@ -1,0 +1,508 @@
+name: Qwen 2.5 Coder 14B LLM Agent Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_variant:
+        description: 'Model variant to load'
+        required: true
+        default: 'qwen2.5-coder:14b'
+        type: choice
+        options:
+          - 'qwen2.5-coder:14b'
+          - 'qwen2.5-coder:7b'
+          - 'deepseek-r1:14b'
+          - 'deepseek-r1:8b'
+      api_key:
+        description: 'Custom API Key (Leave default for easy connection)'
+        required: false
+        default: 'sk-qwen-agentic-coder'
+      tailscale_authkey:
+        description: 'Optional: Tailscale Auth Key (for direct private VPN access)'
+        required: false
+        default: ''
+      session_hours:
+        description: 'Server session duration in hours (Max 5.8)'
+        required: false
+        default: '5.5'
+
+jobs:
+  qwen-coder:
+    name: Qwen 2.5 Coder 14B Agentic Engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize System RAM & Disk Space (8GB Swap + Disk Cleanup)
+        run: |
+          echo "==> Optimizing system memory and disk..."
+          # Free up disk space from unused pre-installed packages
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          
+          # Create 8GB NVMe swapfile to guarantee 24GB total addressable memory
+          sudo fallocate -l 8G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          
+          # Set optimal swappiness
+          sudo sysctl vm.swappiness=10
+          echo "==> Total available memory:"
+          free -h
+
+      - name: Install & Configure Ollama LLM Engine
+        run: |
+          echo "==> Installing official Ollama engine with CPU AVX2 acceleration..."
+          curl -fsSL https://ollama.com/install.sh | sh
+
+          # Configure Ollama environment for OpenAI-compatible API
+          sudo systemctl stop ollama 2>/dev/null || true
+          
+          # Start Ollama with multi-threaded CPU configuration
+          export OLLAMA_HOST="0.0.0.0:11434"
+          export OLLAMA_NUM_PARALLEL=2
+          export OLLAMA_MAX_LOADED_MODELS=1
+          export OLLAMA_KEEP_ALIVE="24h"
+          
+          ollama serve > /tmp/ollama.log 2>&1 &
+          sleep 4
+
+          echo "==> Pulling ${{ github.event.inputs.model_variant }} GGUF model..."
+          ollama pull "${{ github.event.inputs.model_variant }}"
+          echo "==> Model successfully loaded and ready in memory!"
+
+      - name: Setup Fast Web Chat UI & OpenAI-Compatible API Proxy
+        run: |
+          MODEL_NAME="${{ github.event.inputs.model_variant }}"
+          API_KEY="${{ github.event.inputs.api_key }}"
+          
+          echo "==> Deploying lightweight Web Chat UI and API Router..."
+          # Install lightweight node web server / proxy
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nodejs npm
+
+          # Create single-file modern Web Chat Interface + OpenAI CORS proxy
+          mkdir -p /tmp/webui
+          cat << 'EOF' > /tmp/webui/server.js
+          const http = require('http');
+          const fs = require('fs');
+          const url = require('url');
+
+          const OLLAMA_PORT = 11434;
+          const PORT = 8080;
+
+          const server = http.createServer(async (req, res) => {
+            // Enable CORS for Cursor, Continue.dev, and browser clients
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key');
+
+            if (req.method === 'OPTIONS') {
+              res.writeHead(200);
+              res.end();
+              return;
+            }
+
+            const parsedUrl = url.parse(req.url, true);
+
+            // Serve built-in Web Chat UI
+            if (parsedUrl.pathname === '/' || parsedUrl.pathname === '/index.html') {
+              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.end(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>Qwen 2.5 Coder 14B - Agentic AI Workspace</title>
+                  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+                  <style>
+                    :root {
+                      --bg: #0d1117;
+                      --surface: #161b22;
+                      --border: #30363d;
+                      --accent: #58a6ff;
+                      --accent-hover: #1f6feb;
+                      --text: #c9d1d9;
+                      --text-muted: #8b949e;
+                      --code-bg: #090d13;
+                      --user-bubble: #1f6feb22;
+                      --assistant-bubble: #161b22;
+                    }
+                    * { box-sizing: border-box; margin: 0; padding: 0; }
+                    body {
+                      font-family: 'Inter', sans-serif;
+                      background-color: var(--bg);
+                      color: var(--text);
+                      height: 100vh;
+                      display: flex;
+                      flex-direction: column;
+                    }
+                    header {
+                      background: var(--surface);
+                      border-bottom: 1px solid var(--border);
+                      padding: 14px 24px;
+                      display: flex;
+                      justify-content: space-between;
+                      align-items: center;
+                    }
+                    .header-title {
+                      display: flex;
+                      align-items: center;
+                      gap: 10px;
+                      font-size: 1.15rem;
+                      font-weight: 700;
+                      color: #fff;
+                    }
+                    .badge {
+                      background: #238636;
+                      color: #fff;
+                      font-size: 0.75rem;
+                      padding: 2px 8px;
+                      border-radius: 12px;
+                      font-weight: 600;
+                    }
+                    .chat-container {
+                      flex: 1;
+                      overflow-y: auto;
+                      padding: 24px;
+                      display: flex;
+                      flex-direction: column;
+                      gap: 16px;
+                      max-width: 900px;
+                      margin: 0 auto;
+                      width: 100%;
+                    }
+                    .message {
+                      display: flex;
+                      flex-direction: column;
+                      gap: 6px;
+                      padding: 14px 18px;
+                      border-radius: 10px;
+                      border: 1px solid var(--border);
+                      line-height: 1.55;
+                      font-size: 0.95rem;
+                    }
+                    .message.user {
+                      background: var(--user-bubble);
+                      border-color: #388bfd44;
+                      align-self: flex-end;
+                      max-width: 85%;
+                    }
+                    .message.assistant {
+                      background: var(--assistant-bubble);
+                      border-color: var(--border);
+                      align-self: flex-start;
+                      max-width: 100%;
+                    }
+                    .msg-author {
+                      font-size: 0.75rem;
+                      font-weight: 600;
+                      color: var(--text-muted);
+                      text-transform: uppercase;
+                      letter-spacing: 0.5px;
+                    }
+                    pre {
+                      background: var(--code-bg);
+                      border: 1px solid var(--border);
+                      border-radius: 6px;
+                      padding: 12px;
+                      overflow-x: auto;
+                      font-family: 'Fira Code', monospace;
+                      font-size: 0.88rem;
+                      margin: 10px 0;
+                    }
+                    code {
+                      font-family: 'Fira Code', monospace;
+                      color: #79c0ff;
+                    }
+                    .input-area {
+                      background: var(--surface);
+                      border-top: 1px solid var(--border);
+                      padding: 16px 24px;
+                      display: flex;
+                      gap: 12px;
+                      max-width: 900px;
+                      margin: 0 auto;
+                      width: 100%;
+                    }
+                    textarea {
+                      flex: 1;
+                      background: var(--bg);
+                      border: 1px solid var(--border);
+                      border-radius: 8px;
+                      padding: 12px 16px;
+                      color: #fff;
+                      font-family: inherit;
+                      font-size: 0.95rem;
+                      resize: none;
+                      outline: none;
+                      height: 48px;
+                      transition: border-color 0.2s;
+                    }
+                    textarea:focus { border-color: var(--accent); }
+                    button {
+                      background: var(--accent);
+                      color: #fff;
+                      border: none;
+                      border-radius: 8px;
+                      padding: 0 20px;
+                      font-weight: 600;
+                      cursor: pointer;
+                      transition: background 0.2s;
+                    }
+                    button:hover { background: var(--accent-hover); }
+                  </style>
+                </head>
+                <body>
+                  <header>
+                    <div class="header-title">
+                      <span>⚡ Qwen 2.5 Coder 14B Instruct</span>
+                      <span class="badge">ACTIVE</span>
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">
+                      OpenAI API Compatible Endpoint Active
+                    </div>
+                  </header>
+                  <div class="chat-container" id="chat">
+                    <div class="message assistant">
+                      <div class="msg-author">Qwen 2.5 Coder</div>
+                      <div>Hello! I am **Qwen 2.5 Coder 14B Instruct**, specialized in agentic coding, multi-file refactoring, debugging, and tool execution. How can I help you code today?</div>
+                    </div>
+                  </div>
+                  <div class="input-area">
+                    <textarea id="prompt" placeholder="Ask a coding question, request refactoring, or paste an error..." onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); send(); }"></textarea>
+                    <button onclick="send()">Send</button>
+                  </div>
+                  <script>
+                    const chat = document.getElementById('chat');
+                    const promptInput = document.getElementById('prompt');
+                    let history = [];
+
+                    async function send() {
+                      const text = promptInput.value.trim();
+                      if (!text) return;
+                      promptInput.value = '';
+
+                      // Add user message
+                      const userMsg = document.createElement('div');
+                      userMsg.className = 'message user';
+                      userMsg.innerHTML = '<div class="msg-author">You</div><div>' + escapeHtml(text) + '</div>';
+                      chat.appendChild(userMsg);
+                      history.push({ role: 'user', content: text });
+
+                      // Add bot placeholder
+                      const botMsg = document.createElement('div');
+                      botMsg.className = 'message assistant';
+                      botMsg.innerHTML = '<div class="msg-author">Qwen 2.5 Coder</div><div class="content">Thinking...</div>';
+                      chat.appendChild(botMsg);
+                      chat.scrollTop = chat.scrollHeight;
+
+                      const contentDiv = botMsg.querySelector('.content');
+
+                      try {
+                        const response = await fetch('/v1/chat/completions', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            model: '${MODEL_NAME}',
+                            messages: history,
+                            stream: true
+                          })
+                        });
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let botReply = '';
+                        contentDiv.innerHTML = '';
+
+                        while (true) {
+                          const { done, value } = await reader.read();
+                          if (done) break;
+                          const chunk = decoder.decode(value);
+                          const lines = chunk.split('\\n');
+                          for (const line of lines) {
+                            if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                              try {
+                                const json = JSON.parse(line.substring(6));
+                                const delta = json.choices[0]?.delta?.content || '';
+                                botReply += delta;
+                                contentDiv.innerText = botReply;
+                                chat.scrollTop = chat.scrollHeight;
+                              } catch(e) {}
+                            }
+                          }
+                        }
+                        history.push({ role: 'assistant', content: botReply });
+                      } catch (err) {
+                        contentDiv.innerHTML = '<span style="color:#f85149;">Error connecting to model server: ' + err.message + '</span>';
+                      }
+                    }
+
+                    function escapeHtml(str) {
+                      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    }
+                  </script>
+                </body>
+                </html>
+              `);
+              return;
+            }
+
+            // Proxy /v1/* requests directly to Ollama
+            const targetPath = parsedUrl.pathname.startsWith('/v1') ? parsedUrl.pathname : '/v1' + parsedUrl.pathname;
+            
+            const proxyReq = http.request({
+              hostname: '127.0.0.1',
+              port: OLLAMA_PORT,
+              path: targetPath,
+              method: req.method,
+              headers: req.headers
+            }, (proxyRes) => {
+              res.writeHead(proxyRes.statusCode, proxyRes.headers);
+              proxyRes.pipe(res);
+            });
+
+            proxyReq.on('error', (e) => {
+              res.writeHead(502, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Failed to connect to backend Ollama engine', details: e.message }));
+            });
+
+            req.pipe(proxyReq);
+          });
+
+          server.listen(PORT, '0.0.0.0', () => {
+            console.log(`OpenAI API & Web UI running on http://0.0.0.0:${PORT}`);
+          });
+          EOF
+
+          node /tmp/webui/server.js > /tmp/webui.log 2>&1 &
+          sleep 2
+
+      - name: Setup Cloudflare HTTPS Quick Tunnel & Tailscale Mesh
+        run: |
+          TS_KEY="${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
+          
+          echo "==> Launching Cloudflare HTTPS Quick Tunnel on Port 8080..."
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          /tmp/cloudflared tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+
+          # Connect Tailscale if key provided
+          if [ -n "$TS_KEY" ]; then
+            echo "==> Connecting Tailscale mesh network..."
+            curl -fsSL https://tailscale.com/install.sh | sh
+            sudo tailscale up --authkey="$TS_KEY" --hostname="gha-qwen-coder" --accept-routes || true
+          fi
+
+      - name: Generate Connection Info & Step Summary
+        run: |
+          MODEL_NAME="${{ github.event.inputs.model_variant }}"
+          API_KEY="${{ github.event.inputs.api_key }}"
+          
+          # Extract Cloudflare URL
+          CF_URL=""
+          for i in {1..30}; do
+            if [ -f /tmp/cloudflared.log ]; then
+              CF_URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
+              if [ -n "$CF_URL" ]; then break; fi
+            fi
+            sleep 1
+          done
+
+          TS_IP=""
+          if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
+            TS_IP=$(tailscale ip -4 || true)
+          fi
+
+          echo "### ⚡ Qwen 2.5 Coder 14B LLM Agent Server is LIVE!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "$CF_URL" ]; then
+            echo "#### 🌐 1-Click Interactive Web Chat UI:" >> $GITHUB_STEP_SUMMARY
+            echo "- **👉 [Click Here to Open Web Chat Interface](${CF_URL})**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🔌 OpenAI-Compatible API Endpoint (For Cursor, Continue.dev, Aider, Cline):" >> $GITHUB_STEP_SUMMARY
+            echo "- **Base URL:** \`${CF_URL}/v1\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **API Key:** \`${API_KEY}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Model Name:** \`${MODEL_NAME}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -n "$TS_IP" ]; then
+            echo "#### 🔒 Private Tailscale Direct API Access:" >> $GITHUB_STEP_SUMMARY
+            echo "- **Base URL:** \`http://${TS_IP}:8080/v1\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Model Name:** \`${MODEL_NAME}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "#### 🛠️ Quick Setup in Cursor / VS Code (Continue.dev):" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo '{' >> $GITHUB_STEP_SUMMARY
+          echo '  "models": [' >> $GITHUB_STEP_SUMMARY
+          echo '    {' >> $GITHUB_STEP_SUMMARY
+          echo '      "title": "Qwen 2.5 Coder 14B (GitHub Runner)",' >> $GITHUB_STEP_SUMMARY
+          echo '      "provider": "openai",' >> $GITHUB_STEP_SUMMARY
+          echo "      \"model\": \"${MODEL_NAME}\"," >> $GITHUB_STEP_SUMMARY
+          if [ -n "$CF_URL" ]; then
+            echo "      \"apiBase\": \"${CF_URL}/v1\"," >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "      \"apiKey\": \"${API_KEY}\"" >> $GITHUB_STEP_SUMMARY
+          echo '    }' >> $GITHUB_STEP_SUMMARY
+          echo '  ]' >> $GITHUB_STEP_SUMMARY
+          echo '}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "#### 💻 Running Aider in Terminal with this Server:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          if [ -n "$CF_URL" ]; then
+            echo "export OPENAI_API_BASE=${CF_URL}/v1" >> $GITHUB_STEP_SUMMARY
+            echo "export OPENAI_API_KEY=${API_KEY}" >> $GITHUB_STEP_SUMMARY
+            echo "aider --model openai/${MODEL_NAME}" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "========================================================"
+          if [ -n "$CF_URL" ]; then echo ">>> WEB CHAT UI: ${CF_URL}"; fi
+          if [ -n "$CF_URL" ]; then echo ">>> OPENAI API BASE URL: ${CF_URL}/v1"; fi
+          echo ">>> MODEL: ${MODEL_NAME}"
+          echo ">>> API KEY: ${API_KEY}"
+          if [ -n "$TS_IP" ]; then echo ">>> TAILSCALE API BASE: http://${TS_IP}:8080/v1"; fi
+          echo "========================================================"
+
+      - name: Keep LLM Server Alive
+        run: |
+          HOURS="${{ github.event.inputs.session_hours }}"
+          SECONDS_TOTAL=$(awk "BEGIN {print int($HOURS * 3600)}")
+          
+          if [ $SECONDS_TOTAL -gt 20800 ]; then
+            SECONDS_TOTAL=20800
+          fi
+
+          echo "==> Qwen 2.5 Coder 14B active for $HOURS hours ($SECONDS_TOTAL seconds)."
+          echo "==> To terminate early, click 'Cancel workflow' in GitHub Actions."
+
+          START_TIME=$(date +%s)
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            REMAINING=$((SECONDS_TOTAL - ELAPSED))
+            
+            if [ $REMAINING -le 0 ]; then
+              echo "==> Time limit reached. Shutting down gracefully."
+              break
+            fi
+
+            MINS_LEFT=$((REMAINING / 60))
+            echo "[$MINS_LEFT min remaining] Qwen 2.5 Coder 14B engine is serving API requests..."
+            sleep 300
+          done
+
+      - name: Tailscale Auto-Cleanup
+        if: always()
+        run: |
+          if command -v tailscale >/dev/null 2>&1; then
+            sudo tailscale logout || true
+          fi

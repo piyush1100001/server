@@ -49,5 +49,37 @@ Download the free client app: **[Moonlight Stream](https://moonlight-stream.org/
 
 ---
 
+## ⚡ Qwen 2.5 Coder 14B Agentic AI Server (`llm-coder-server.yml`)
+Run **Qwen 2.5 Coder 14B Instruct** (or 7B / DeepSeek-R1) on a free GitHub runner as an **OpenAI-compatible API Server + Web Chat UI**:
+
+- **🧠 Model:** `qwen2.5-coder:14b` (14.7B parameters, 128k context)
+- **🌐 Web Chat UI:** 1-Click interactive browser interface via Cloudflare HTTPS.
+- **🔌 OpenAI-Compatible API:** Plug directly into **Cursor, Continue.dev, Aider, Cline, or Roo Code**.
+- **🔒 Tailscale Private Mesh:** Access the API securely on your private VPN network.
+
+### Connecting from Cursor / Continue.dev:
+```json
+{
+  "models": [
+    {
+      "title": "Qwen 2.5 Coder 14B (Cloud)",
+      "provider": "openai",
+      "model": "qwen2.5-coder:14b",
+      "apiBase": "https://xxxx.trycloudflare.com/v1",
+      "apiKey": "sk-qwen-agentic-coder"
+    }
+  ]
+}
+```
+
+### Running Aider CLI with your Cloud LLM:
+```bash
+export OPENAI_API_BASE=https://xxxx.trycloudflare.com/v1
+export OPENAI_API_KEY=sk-qwen-agentic-coder
+aider --model openai/qwen2.5-coder:14b
+```
+
+---
+
 ## 🛑 Stopping a Session
 Click **Cancel workflow** in GitHub Actions. Tailscale will automatically log out and clean up the runner from your devices.
