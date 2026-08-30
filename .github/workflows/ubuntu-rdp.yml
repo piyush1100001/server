@@ -53,6 +53,11 @@ jobs:
             arc-theme \
             dbus-x11 \
             xvfb \
+            xserver-xorg-video-dummy \
+            xserver-xorg-input-evdev \
+            xserver-xorg-input-all \
+            x11-xserver-utils \
+            xdotool \
             x11vnc \
             novnc \
             websockify \
@@ -162,8 +167,52 @@ jobs:
           PASS="${{ github.event.inputs.vnc_password }}"
           RES="${{ github.event.inputs.screen_resolution }}"
           
-          echo "==> Launching optimized Xvfb virtual display on :1 with resolution $RES..."
-          Xvfb :1 -screen 0 ${RES}x24 +extension GLX +extension MIT-SHM +extension RANDR +render -noreset &
+          # Configure Xorg Dummy Display with evdev & uinput hardware input capture
+          cat << 'EOF' > /tmp/xorg.conf
+          Section "ServerLayout"
+              Identifier "Layout0"
+              Screen 0 "Screen0" 0 0
+          EndSection
+
+          Section "Device"
+              Identifier "Device0"
+              Driver "dummy"
+              VideoRam 256000
+          EndSection
+
+          Section "Monitor"
+              Identifier "Monitor0"
+              HorizSync 28.0-80.0
+              VertRefresh 48.0-75.0
+          EndSection
+
+          Section "Screen"
+              Identifier "Screen0"
+              Device "Device0"
+              Monitor "Monitor0"
+              DefaultDepth 24
+              SubSection "Display"
+                  Depth 24
+                  Modes "1920x1200" "1920x1080" "1280x720"
+              EndSubSection
+          EndSection
+
+          Section "ServerFlags"
+              Option "AutoAddDevices" "true"
+              Option "AllowMouseOpenFail" "true"
+              Option "DontVTSwitch" "true"
+          EndSection
+          EOF
+          sed -i 's/^[ \t]*//' /tmp/xorg.conf
+
+          echo "==> Launching hardware-integrated display server on :1 with resolution $RES..."
+          # Try Xorg with evdev input support, fallback to Xvfb with GLX
+          sudo Xorg :1 -config /tmp/xorg.conf -noreset +extension GLX +extension RANDR +extension RENDER > /tmp/xorg.log 2>&1 &
+          sleep 1
+          if ! kill -0 $! 2>/dev/null; then
+            echo "==> Xorg fallback: Launching Xvfb with RANDR extensions..."
+            Xvfb :1 -screen 0 ${RES}x24 +extension GLX +extension MIT-SHM +extension RANDR +render -noreset &
+          fi
           export DISPLAY=:1
           sleep 1
 
