@@ -35,14 +35,23 @@ jobs:
         run: |
           echo "==> Installing TigerVNC, WebSockify, and Cloudflared via Homebrew..."
           brew install tiger-vnc websockify cloudflare/cloudflare/cloudflared 2>/dev/null || true
+          
+          # Add keg-only Homebrew paths to PATH
+          echo "/opt/homebrew/opt/tiger-vnc/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/tiger-vnc/sbin" >> $GITHUB_PATH
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "/usr/local/opt/tiger-vnc/bin" >> $GITHUB_PATH
 
       - name: Configure VNC Password & Display
         run: |
+          export PATH="/opt/homebrew/opt/tiger-vnc/bin:/opt/homebrew/opt/tiger-vnc/sbin:/opt/homebrew/bin:/usr/local/opt/tiger-vnc/bin:$PATH"
           PASS="${{ github.event.inputs.vnc_password }}"
           RES="${{ github.event.inputs.screen_resolution }}"
           echo "==> Setting up dedicated VNC authentication file..."
           mkdir -p ~/.vnc
-          echo "$PASS" | vncpasswd -f > ~/.vnc/passwd
+          
+          VNCPASSWD_BIN=$(command -v vncpasswd || find /opt/homebrew /usr/local -name vncpasswd 2>/dev/null | head -n 1)
+          echo "$PASS" | "$VNCPASSWD_BIN" -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
           # Create clean startup script
@@ -55,8 +64,9 @@ jobs:
           chmod +x ~/.vnc/xstartup
 
           echo "==> Launching TigerVNC Server on display :1 (port 5901) with resolution $RES..."
-          vncserver -kill :1 2>/dev/null || true
-          vncserver :1 -geometry $RES -depth 24 -rfbauth ~/.vnc/passwd
+          VNCSERVER_BIN=$(command -v vncserver || find /opt/homebrew /usr/local -name vncserver 2>/dev/null | head -n 1)
+          "$VNCSERVER_BIN" -kill :1 2>/dev/null || true
+          "$VNCSERVER_BIN" :1 -geometry $RES -depth 24 -rfbauth ~/.vnc/passwd
 
           echo "==> Setting up noVNC Web Client on port 6080..."
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
