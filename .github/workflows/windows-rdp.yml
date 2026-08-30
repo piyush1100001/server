@@ -79,12 +79,15 @@ jobs:
           $SunshineExe = "C:\Program Files\Sunshine\sunshine.exe"
           if (Test-Path $SunshineExe) {
             Write-Host "==> Configuring Sunshine settings and credentials with Tailscale IP ($TS_IP)..."
+            # Set credentials first
+            & $SunshineExe --creds admin $Password
+
             $SunshineConfigDir = "C:\Program Files\Sunshine\config"
             New-Item -ItemType Directory -Force -Path $SunshineConfigDir | Out-Null
             $Conf = @(
-              "origin_web_ui_allowed = wan"
-              "origin_pin_allowed = wan"
-              "csrf_allowed_origins = [ ""https://localhost:47990"", ""https://127.0.0.1:47990"", ""https://$TS_IP:47990"", ""http://$TS_IP:47990"", ""https://gha-windows-rdp:47990"", ""http://gha-windows-rdp:47990"", ""*"" ]"
+              "origin_web_ui_allowed = wan,lan,pc"
+              "origin_pin_allowed = wan,lan,pc"
+              "csrf_allowed_origins = https://$TS_IP:47990,http://$TS_IP:47990,https://localhost:47990,http://localhost:47990,https://127.0.0.1:47990,https://gha-windows-rdp:47990"
               "min_threads = 2"
               "address = 0.0.0.0"
               "port = 47989"
@@ -92,7 +95,6 @@ jobs:
             )
             $Conf | Out-File -FilePath "$SunshineConfigDir\sunshine.conf" -Encoding utf8
             
-            & $SunshineExe --creds admin $Password
             Start-Process -FilePath $SunshineExe -WindowStyle Hidden
           }
 
