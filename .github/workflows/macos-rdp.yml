@@ -30,7 +30,7 @@ jobs:
       - name: Configure Dedicated RDP User & Graphical Auto-Login
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Creating dedicated admin user 'rdpuser' in OpenDirectory..."
+          echo "==> Creating dedicated admin user 'rdpuser' in OpenDirectory with authentic PBKDF2 ShadowHash..."
           
           # Delete any old record if present
           sudo dscl . -delete /Users/rdpuser >/dev/null 2>&1 || true
@@ -44,12 +44,24 @@ jobs:
           sudo dscl . -create /Users/rdpuser NFSHomeDirectory /Users/rdpuser
           sudo mkdir -p /Users/rdpuser
           sudo chown -R 550:20 /Users/rdpuser
-          
-          # Set password directly in OpenDirectory
-          sudo dscl . -passwd /Users/rdpuser "$PASS"
+
+          # Inject authentic Apple PBKDF2 binary ShadowHashData for both users
+          python3 -c "
+          import plistlib, os, hashlib, binascii, subprocess
+          passw = b'${PASS}'
+          salt = os.urandom(32)
+          entropy = hashlib.pbkdf2_hmac('sha512', passw, salt, 45000)
+          shadow = {'SALTED-SHA512-PBKDF2': {'entropy': entropy, 'salt': salt, 'iterations': 45000}}
+          hex_data = binascii.hexlify(plistlib.dumps(shadow)).decode()
+          for u in ['rdpuser', 'runner']:
+              subprocess.run(['sudo', 'dscl', '.', '-create', f'/Users/{u}', 'AuthenticationAuthority', ';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>'], check=False)
+              subprocess.run(['sudo', 'dscl', '.', '-create', f'/Users/{u}', 'ShadowHashData', hex_data], check=False)
+              subprocess.run(['sudo', 'dscl', '.', '-passwd', f'/Users/{u}', passw.decode()], check=False)
+          "
 
           # Add rdpuser to admin and screensharing groups
           echo y | sudo dseditgroup -o edit -a rdpuser -t user admin 2>/dev/null || true
+          echo y | sudo dseditgroup -o edit -a rdpuser -t user com.apple.access_screensharing 2>/dev/null || true
 
           # Configure macOS graphical Auto-Login into Aqua desktop
           sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser rdpuser
