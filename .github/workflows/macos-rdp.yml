@@ -32,32 +32,51 @@ jobs:
           PASS="${{ github.event.inputs.vnc_password }}"
           echo "==> Creating dedicated admin user 'rdpuser' in OpenDirectory with authentic PBKDF2 ShadowHash..."
           
-          # Delete any old record if present
-          sudo dscl . -delete /Users/rdpuser >/dev/null 2>&1 || true
-          
-          # Create fresh OpenDirectory record
-          sudo dscl . -create /Users/rdpuser
-          sudo dscl . -create /Users/rdpuser UserShell /bin/zsh
-          sudo dscl . -create /Users/rdpuser RealName "Remote Admin"
-          sudo dscl . -create /Users/rdpuser UniqueID 550
-          sudo dscl . -create /Users/rdpuser PrimaryGroupID 20
-          sudo dscl . -create /Users/rdpuser NFSHomeDirectory /Users/rdpuser
-          sudo mkdir -p /Users/rdpuser
-          sudo chown -R 550:20 /Users/rdpuser
-
-          # Inject authentic Apple PBKDF2 binary ShadowHashData for both users
-          python3 -c "
-          import plistlib, os, hashlib, binascii, subprocess
+          # Directly provision user OpenDirectory plist with Salted SHA512 PBKDF2 binary hash
+          sudo python3 -c "
+          import plistlib, os, hashlib, subprocess
           passw = b'${PASS}'
           salt = os.urandom(32)
           entropy = hashlib.pbkdf2_hmac('sha512', passw, salt, 45000)
-          shadow = {'SALTED-SHA512-PBKDF2': {'entropy': entropy, 'salt': salt, 'iterations': 45000}}
-          hex_data = binascii.hexlify(plistlib.dumps(shadow)).decode()
-          for u in ['rdpuser', 'runner']:
-              subprocess.run(['sudo', 'dscl', '.', '-create', f'/Users/{u}', 'AuthenticationAuthority', ';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>'], check=False)
-              subprocess.run(['sudo', 'dscl', '.', '-create', f'/Users/{u}', 'ShadowHashData', hex_data], check=False)
-              subprocess.run(['sudo', 'dscl', '.', '-passwd', f'/Users/{u}', passw.decode()], check=False)
+          shadow_plist = plistlib.dumps({'SALTED-SHA512-PBKDF2': {'entropy': entropy, 'salt': salt, 'iterations': 45000}})
+          
+          user_data = {
+              'name': ['rdpuser'],
+              'realname': ['Remote Admin'],
+              'uid': ['550'],
+              'gid': ['20'],
+              'home': ['/Users/rdpuser'],
+              'shell': ['/bin/zsh'],
+              'AuthenticationAuthority': [';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>'],
+              'ShadowHashData': [shadow_plist],
+              '_writers_ShadowHashData': ['rdpuser'],
+              '_writers_passwd': ['rdpuser']
+          }
+          
+          os.makedirs('/Users/rdpuser', exist_ok=True)
+          os.makedirs('/var/db/dslocal/nodes/Default/users', exist_ok=True)
+          
+          plist_path = '/var/db/dslocal/nodes/Default/users/rdpuser.plist'
+          with open(plist_path, 'wb') as f:
+              plistlib.dump(user_data, f, fmt=plistlib.FMT_BINARY)
+          os.chmod(plist_path, 0o600)
+          
+          runner_path = '/var/db/dslocal/nodes/Default/users/runner.plist'
+          if os.path.exists(runner_path):
+              try:
+                  with open(runner_path, 'rb') as f:
+                      rdata = plistlib.load(f)
+                  rdata['ShadowHashData'] = [shadow_plist]
+                  rdata['AuthenticationAuthority'] = [';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>']
+                  with open(runner_path, 'wb') as f:
+                      plistlib.dump(rdata, f, fmt=plistlib.FMT_BINARY)
+                  os.chmod(runner_path, 0o600)
+              except Exception as e:
+                  print('Runner update:', e)
+          
+          subprocess.run(['killall', 'opendirectoryd'], check=False)
           "
+          sleep 2
 
           # Add rdpuser to admin and screensharing groups
           echo y | sudo dseditgroup -o edit -a rdpuser -t user admin 2>/dev/null || true
