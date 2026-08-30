@@ -35,7 +35,7 @@ jobs:
           sudo sysadminctl -resetPasswordFor runner -newPassword "$PASS" 2>/dev/null || true
           echo -e "${PASS}\n${PASS}" | sudo passwd runner 2>/dev/null || true
 
-      - name: Enable Apple Screen Sharing (VNC / ARD) & TCC Permissions
+      - name: Enable Apple Screen Sharing (VNC / ARD) & Permissions
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
           echo "==> Enabling Apple Remote Desktop & Screen Sharing..."
@@ -48,21 +48,38 @@ jobs:
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
             "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
 
+          # Authorize runner user in macOS Screen Sharing Directory Group
+          sudo dseditgroup -o create com.apple.access_screensharing 2>/dev/null || true
+          sudo dseditgroup -o edit -a runner -t user com.apple.access_screensharing 2>/dev/null || true
+          sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
+
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-          # Configure Kickstart permissions, legacy VNC support, and password
+          # Configure Kickstart permissions, all users access, and VNC password
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
+            -activate -configure -allowAccessFor -allUsers -privs -all \
             -clientopts -setvnclegacy -vnclegacy yes \
             -setvncpw -vncpw "$PASS" \
-            -users runner -privs -all \
             -restart -agent -console || true
 
-      - name: Setup Network Tunnels (Tailscale & Ngrok)
+      - name: Setup Network Tunnels & Web Access (Cloudflare, Tailscale, Ngrok)
         run: |
           TS_KEY="${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
           NGROK_TOKEN="${{ github.event.inputs.ngrok_token }}"
+
+          # Install Cloudflared & WebSockify for 1-click Web Browser Desktop
+          brew install cloudflare/cloudflare/cloudflared websockify 2>/dev/null || true
+          
+          # Clone lightweight noVNC client
+          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
+          
+          # Start websockify proxy on port 6080 -> macOS VNC 5900
+          websockify --web /tmp/novnc 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
+          sleep 2
+
+          # Start Cloudflare Quick Tunnel for Web access
+          cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
 
           # Setup Tailscale via Homebrew CLI
           if [ -n "$TS_KEY" ]; then
@@ -86,6 +103,17 @@ jobs:
       - name: Generate Connection Info & Step Summary
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
+          
+          # Extract Cloudflare URL if available
+          CF_URL=""
+          for i in {1..20}; do
+            if [ -f /tmp/cloudflared.log ]; then
+              CF_URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
+              if [ -n "$CF_URL" ]; then break; fi
+            fi
+            sleep 1
+          done
+
           TS_IP=""
           if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
             TS_IP=$(tailscale ip -4 || true)
@@ -99,8 +127,17 @@ jobs:
           OS_VERSION=$(sw_vers -productVersion)
           OS_NAME=$(sw_vers -productName)
 
+          OPTIMIZED_WEB_URL="${CF_URL}/vnc.html?autoconnect=true&resize=scale&quality=6"
+
           echo "### 🍎 macOS Remote Desktop is LIVE!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$CF_URL" ]; then
+            echo "#### 🌐 1-Click Fast Web Browser Access:" >> $GITHUB_STEP_SUMMARY
+            echo "- **👉 [Click Here to Open macOS Desktop](${OPTIMIZED_WEB_URL})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
           echo "- **OS:** ${OS_NAME} ${OS_VERSION} (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
           echo "- **Username:** \`runner\`" >> $GITHUB_STEP_SUMMARY
@@ -110,7 +147,7 @@ jobs:
           if [ -n "$TS_IP" ]; then
             echo "#### 🍏 Native Apple Screen Sharing via Tailscale:" >> $GITHUB_STEP_SUMMARY
             echo "- **Mac Screen Sharing Address:** \`vnc://${TS_IP}:5900\` (or \`vnc://gha-macos-rdp:5900\`)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Quick Connect on Mac:** Press \`Cmd + Space\` -> type \`Screen Sharing\` -> enter \`${TS_IP}\` (Username: \`runner\`, Password: \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
+            echo "- **How to connect in Screen Sharing:** Enter \`${TS_IP}\` -> log in with user \`runner\` & password \`${PASS}\` (or select 'Connect using VNC Password' and enter \`${PASS}\`)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -121,6 +158,7 @@ jobs:
           fi
 
           echo "========================================================"
+          if [ -n "$CF_URL" ]; then echo ">>> 1-CLICK WEB DESKTOP: ${OPTIMIZED_WEB_URL}"; fi
           echo ">>> USERNAME: runner"
           echo ">>> PASSWORD: ${PASS}"
           if [ -n "$TS_IP" ]; then echo ">>> TAILSCALE VNC: vnc://${TS_IP}:5900"; fi
