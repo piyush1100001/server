@@ -67,6 +67,27 @@ jobs:
             sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServiceListenEvent','com.carriez.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
           done
 
+          # Install DeskPad virtual monitor display driver to instantiate display buffer
+          echo "==> Installing DeskPad virtual monitor driver..."
+          curl -fsSL -L "https://github.com/Stengo/DeskPad/releases/download/v1.3.2/DeskPad.app.zip" -o /tmp/deskpad.zip 2>/dev/null || true
+          if [ -f /tmp/deskpad.zip ]; then
+            sudo unzip -q -o /tmp/deskpad.zip -d /Applications/ 2>/dev/null || true
+            rm -f /tmp/deskpad.zip
+          fi
+
+          # Grant TCC permissions for DeskPad
+          for tcc_path in \
+            "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
+            "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "/var/root/Library/Application Support/com.apple.TCC/TCC.db"; do
+            sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.stengo.DeskPad',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+            sudo sqlite3 "$tcc_path" "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.stengo.DeskPad',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
+          done
+
+          # Launch DeskPad to instantiate 1080p virtual display buffer
+          open -a /Applications/DeskPad.app 2>/dev/null || true
+          sleep 3
+
           # Prevent display sleep and keep virtual display compositor awake
           caffeinate -d -i -m -u &
 
