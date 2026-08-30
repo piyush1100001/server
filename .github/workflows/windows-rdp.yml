@@ -51,12 +51,13 @@ jobs:
       - name: Setup Sunshine 60 FPS Server & Network Tunnels
         shell: powershell
         run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
           $Password = "${{ github.event.inputs.rdp_password }}"
           $TS_KEY = "${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
           $NGROK_TOKEN = "${{ github.event.inputs.ngrok_token }}"
 
           Write-Host "==> Downloading and installing Sunshine 60 FPS Streaming Server for Windows..."
-          Invoke-WebRequest -Uri "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe" -OutFile "$env:TEMP\sunshine-installer.exe"
+          curl.exe -fsSL -L "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe" -o "$env:TEMP\sunshine-installer.exe"
           Start-Process -FilePath "$env:TEMP\sunshine-installer.exe" -ArgumentList "/S" -Wait
           Start-Sleep -Seconds 3
 
@@ -64,7 +65,7 @@ jobs:
           $TS_IP = ""
           if ($TS_KEY -ne "") {
             Write-Host "==> Installing Tailscale for Windows..."
-            Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "$env:TEMP\tailscale-setup.exe"
+            curl.exe -fsSL -L "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -o "$env:TEMP\tailscale-setup.exe"
             Start-Process -FilePath "$env:TEMP\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
             
             $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
@@ -101,7 +102,7 @@ jobs:
           # Setup Ngrok if token is provided
           if ($NGROK_TOKEN -ne "") {
             Write-Host "==> Installing Ngrok for Windows..."
-            Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "$env:TEMP\ngrok.zip"
+            curl.exe -fsSL -L "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -o "$env:TEMP\ngrok.zip"
             Expand-Archive -Path "$env:TEMP\ngrok.zip" -DestinationPath "C:\Windows\System32" -Force
             ngrok config add-authtoken $NGROK_TOKEN
             Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput "$env:TEMP\ngrok.log" -NoNewWindow
