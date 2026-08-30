@@ -380,8 +380,11 @@ jobs:
           });
           EOF
 
-          node /tmp/webui/server.js > /tmp/webui.log 2>&1 &
+          nohup node /tmp/webui/server.js > /tmp/webui.log 2>&1 & disown
           sleep 2
+
+          # Verify Web UI is listening
+          curl -fsSL http://127.0.0.1:8080/ > /dev/null && echo "==> Web UI & API Proxy active on port 8080!" || echo "Warning: Port 8080 not responding yet"
 
       - name: Setup Cloudflare HTTPS Quick Tunnel & Tailscale Mesh
         run: |
@@ -390,7 +393,7 @@ jobs:
           echo "==> Launching Cloudflare HTTPS Quick Tunnel on Port 8080..."
           curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
           chmod +x /tmp/cloudflared
-          /tmp/cloudflared tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+          nohup /tmp/cloudflared tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cloudflared.log 2>&1 & disown
 
           # Connect Tailscale if key provided
           if [ -n "$TS_KEY" ]; then
