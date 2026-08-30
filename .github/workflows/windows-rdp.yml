@@ -56,8 +56,17 @@ jobs:
           $TS_KEY = "${{ github.event.inputs.tailscale_authkey || secrets.TAILSCALE_AUTHKEY }}"
           $NGROK_TOKEN = "${{ github.event.inputs.ngrok_token }}"
 
-          Write-Host "==> Downloading and installing Sunshine 60 FPS Streaming Server for Windows..."
-          curl.exe -fsSL -L "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe" -o "$env:TEMP\sunshine-installer.exe"
+          Write-Host "==> Resolving latest Sunshine Windows installer URL..."
+          $AssetUrl = ""
+          try {
+            $ReleaseJson = curl.exe -fsSL https://api.github.com/repos/LizardByte/Sunshine/releases/latest | ConvertFrom-Json
+            $AssetUrl = ($ReleaseJson.assets | Where-Object { $_.name -match "windows.*installer\.exe" -or $_.name -match "Windows.*installer\.exe" } | Select-Object -ExpandProperty browser_download_url -First 1)
+          } catch {}
+          if (-not $AssetUrl) {
+            $AssetUrl = "https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-AMD64-installer.exe"
+          }
+          Write-Host "==> Downloading Sunshine from: $AssetUrl"
+          curl.exe -fsSL -L "$AssetUrl" -o "$env:TEMP\sunshine-installer.exe"
           Start-Process -FilePath "$env:TEMP\sunshine-installer.exe" -ArgumentList "/S" -Wait
           Start-Sleep -Seconds 3
 
