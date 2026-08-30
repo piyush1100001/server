@@ -148,9 +148,9 @@ jobs:
           # Install websockify via pip3
           pip3 install --break-system-packages websockify 2>/dev/null || python3 -m pip install websockify 2>/dev/null || true
 
-          # Download official cloudflared binary for macOS Apple Silicon
-          curl -fsSL -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64 -o /tmp/cloudflared
-          chmod +x /tmp/cloudflared
+          # Install official cloudflared for macOS Apple Silicon
+          brew install cloudflared 2>/dev/null || (curl -fsSL -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz | tar -xz -C /tmp 2>/dev/null) || true
+          CLOUDFLARED_BIN=$(command -v cloudflared || echo "/tmp/cloudflared")
 
           # Clone lightweight noVNC client
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/novnc 2>/dev/null || true
@@ -160,7 +160,7 @@ jobs:
           sleep 2
 
           # Start Cloudflare Quick Tunnel for Web access
-          /tmp/cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+          "$CLOUDFLARED_BIN" tunnel --url http://localhost:6080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
 
           # Setup Tailscale via Homebrew CLI
           if [ -n "$TS_KEY" ]; then
