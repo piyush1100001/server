@@ -80,307 +80,317 @@ jobs:
           MODEL_NAME="${{ github.event.inputs.model_variant }}"
           API_KEY="${{ github.event.inputs.api_key }}"
           
-          echo "==> Deploying lightweight Web Chat UI and API Router..."
-          # Install lightweight node web server / proxy
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq nodejs npm
+          echo "==> Deploying pure Python 3 Web Chat UI and API Router..."
+          cat << 'EOF' > /tmp/webui.py
+          import http.server
+          import socketserver
+          import urllib.request
+          import json
+          import sys
 
-          # Create single-file modern Web Chat Interface + OpenAI CORS proxy
-          mkdir -p /tmp/webui
-          cat << 'EOF' > /tmp/webui/server.js
-          const http = require('http');
-          const fs = require('fs');
-          const url = require('url');
+          PORT = 8080
+          MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen2.5-coder:14b"
 
-          const OLLAMA_PORT = 11434;
-          const PORT = 8080;
+          HTML_PAGE = f"""<!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Qwen 2.5 Coder 14B - Agentic AI Workspace</title>
+            <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+            <style>
+              :root {{
+                --bg: #0d1117;
+                --surface: #161b22;
+                --border: #30363d;
+                --accent: #58a6ff;
+                --accent-hover: #1f6feb;
+                --text: #c9d1d9;
+                --text-muted: #8b949e;
+                --code-bg: #090d13;
+                --user-bubble: #1f6feb22;
+                --assistant-bubble: #161b22;
+              }}
+              * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+              body {{
+                font-family: 'Inter', sans-serif;
+                background-color: var(--bg);
+                color: var(--text);
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+              }}
+              header {{
+                background: var(--surface);
+                border-bottom: 1px solid var(--border);
+                padding: 14px 24px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              }}
+              .header-title {{
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 1.15rem;
+                font-weight: 700;
+                color: #fff;
+              }}
+              .badge {{
+                background: #238636;
+                color: #fff;
+                font-size: 0.75rem;
+                padding: 2px 8px;
+                border-radius: 12px;
+                font-weight: 600;
+              }}
+              .chat-container {{
+                flex: 1;
+                overflow-y: auto;
+                padding: 24px;
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+                max-width: 900px;
+                margin: 0 auto;
+                width: 100%;
+              }}
+              .message {{
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                padding: 14px 18px;
+                border-radius: 10px;
+                border: 1px solid var(--border);
+                line-height: 1.55;
+                font-size: 0.95rem;
+              }}
+              .message.user {{
+                background: var(--user-bubble);
+                border-color: #388bfd44;
+                align-self: flex-end;
+                max-width: 85%;
+              }}
+              .message.assistant {{
+                background: var(--assistant-bubble);
+                border-color: var(--border);
+                align-self: flex-start;
+                max-width: 100%;
+              }}
+              .msg-author {{
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+              }}
+              pre {{
+                background: var(--code-bg);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 12px;
+                overflow-x: auto;
+                font-family: 'Fira Code', monospace;
+                font-size: 0.88rem;
+                margin: 10px 0;
+              }}
+              code {{
+                font-family: 'Fira Code', monospace;
+                color: #79c0ff;
+              }}
+              .input-area {{
+                background: var(--surface);
+                border-top: 1px solid var(--border);
+                padding: 16px 24px;
+                display: flex;
+                gap: 12px;
+                max-width: 900px;
+                margin: 0 auto;
+                width: 100%;
+              }}
+              textarea {{
+                flex: 1;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 12px 16px;
+                color: #fff;
+                font-family: inherit;
+                font-size: 0.95rem;
+                resize: none;
+                outline: none;
+                height: 48px;
+                transition: border-color 0.2s;
+              }}
+              textarea:focus {{ border-color: var(--accent); }}
+              button {{
+                background: var(--accent);
+                color: #fff;
+                border: none;
+                border-radius: 8px;
+                padding: 0 20px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.2s;
+              }}
+              button:hover {{ background: var(--accent-hover); }}
+            </style>
+          </head>
+          <body>
+            <header>
+              <div class="header-title">
+                <span>⚡ {MODEL}</span>
+                <span class="badge">ACTIVE</span>
+              </div>
+              <div style="font-size: 0.85rem; color: var(--text-muted);">
+                OpenAI API Compatible Endpoint Active
+              </div>
+            </header>
+            <div class="chat-container" id="chat">
+              <div class="message assistant">
+                <div class="msg-author">Qwen 2.5 Coder</div>
+                <div>Hello! I am <strong>{MODEL}</strong>, specialized in agentic coding, multi-file refactoring, debugging, and tool execution. How can I help you code today?</div>
+              </div>
+            </div>
+            <div class="input-area">
+              <textarea id="prompt" placeholder="Ask a coding question, request refactoring, or paste an error..." onkeydown="if(event.key==='Enter' && !event.shiftKey){{ event.preventDefault(); send(); }}"></textarea>
+              <button onclick="send()">Send</button>
+            </div>
+            <script>
+              const chat = document.getElementById('chat');
+              const promptInput = document.getElementById('prompt');
+              let history = [];
 
-          const server = http.createServer(async (req, res) => {
-            // Enable CORS for Cursor, Continue.dev, and browser clients
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key');
+              async function send() {{
+                const text = promptInput.value.trim();
+                if (!text) return;
+                promptInput.value = '';
 
-            if (req.method === 'OPTIONS') {
-              res.writeHead(200);
-              res.end();
-              return;
-            }
+                const userMsg = document.createElement('div');
+                userMsg.className = 'message user';
+                userMsg.innerHTML = '<div class="msg-author">You</div><div>' + escapeHtml(text) + '</div>';
+                chat.appendChild(userMsg);
+                history.push({{ role: 'user', content: text }});
 
-            const parsedUrl = url.parse(req.url, true);
+                const botMsg = document.createElement('div');
+                botMsg.className = 'message assistant';
+                botMsg.innerHTML = '<div class="msg-author">Qwen 2.5 Coder</div><div class="content">Generating response...</div>';
+                chat.appendChild(botMsg);
+                chat.scrollTop = chat.scrollHeight;
 
-            // Serve built-in Web Chat UI
-            if (parsedUrl.pathname === '/' || parsedUrl.pathname === '/index.html') {
-              res.writeHead(200, { 'Content-Type': 'text/html' });
-              res.end(`
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                  <meta charset="UTF-8">
-                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                  <title>Qwen 2.5 Coder 14B - Agentic AI Workspace</title>
-                  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-                  <style>
-                    :root {
-                      --bg: #0d1117;
-                      --surface: #161b22;
-                      --border: #30363d;
-                      --accent: #58a6ff;
-                      --accent-hover: #1f6feb;
-                      --text: #c9d1d9;
-                      --text-muted: #8b949e;
-                      --code-bg: #090d13;
-                      --user-bubble: #1f6feb22;
-                      --assistant-bubble: #161b22;
-                    }
-                    * { box-sizing: border-box; margin: 0; padding: 0; }
-                    body {
-                      font-family: 'Inter', sans-serif;
-                      background-color: var(--bg);
-                      color: var(--text);
-                      height: 100vh;
-                      display: flex;
-                      flex-direction: column;
-                    }
-                    header {
-                      background: var(--surface);
-                      border-bottom: 1px solid var(--border);
-                      padding: 14px 24px;
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                    }
-                    .header-title {
-                      display: flex;
-                      align-items: center;
-                      gap: 10px;
-                      font-size: 1.15rem;
-                      font-weight: 700;
-                      color: #fff;
-                    }
-                    .badge {
-                      background: #238636;
-                      color: #fff;
-                      font-size: 0.75rem;
-                      padding: 2px 8px;
-                      border-radius: 12px;
-                      font-weight: 600;
-                    }
-                    .chat-container {
-                      flex: 1;
-                      overflow-y: auto;
-                      padding: 24px;
-                      display: flex;
-                      flex-direction: column;
-                      gap: 16px;
-                      max-width: 900px;
-                      margin: 0 auto;
-                      width: 100%;
-                    }
-                    .message {
-                      display: flex;
-                      flex-direction: column;
-                      gap: 6px;
-                      padding: 14px 18px;
-                      border-radius: 10px;
-                      border: 1px solid var(--border);
-                      line-height: 1.55;
-                      font-size: 0.95rem;
-                    }
-                    .message.user {
-                      background: var(--user-bubble);
-                      border-color: #388bfd44;
-                      align-self: flex-end;
-                      max-width: 85%;
-                    }
-                    .message.assistant {
-                      background: var(--assistant-bubble);
-                      border-color: var(--border);
-                      align-self: flex-start;
-                      max-width: 100%;
-                    }
-                    .msg-author {
-                      font-size: 0.75rem;
-                      font-weight: 600;
-                      color: var(--text-muted);
-                      text-transform: uppercase;
-                      letter-spacing: 0.5px;
-                    }
-                    pre {
-                      background: var(--code-bg);
-                      border: 1px solid var(--border);
-                      border-radius: 6px;
-                      padding: 12px;
-                      overflow-x: auto;
-                      font-family: 'Fira Code', monospace;
-                      font-size: 0.88rem;
-                      margin: 10px 0;
-                    }
-                    code {
-                      font-family: 'Fira Code', monospace;
-                      color: #79c0ff;
-                    }
-                    .input-area {
-                      background: var(--surface);
-                      border-top: 1px solid var(--border);
-                      padding: 16px 24px;
-                      display: flex;
-                      gap: 12px;
-                      max-width: 900px;
-                      margin: 0 auto;
-                      width: 100%;
-                    }
-                    textarea {
-                      flex: 1;
-                      background: var(--bg);
-                      border: 1px solid var(--border);
-                      border-radius: 8px;
-                      padding: 12px 16px;
-                      color: #fff;
-                      font-family: inherit;
-                      font-size: 0.95rem;
-                      resize: none;
-                      outline: none;
-                      height: 48px;
-                      transition: border-color 0.2s;
-                    }
-                    textarea:focus { border-color: var(--accent); }
-                    button {
-                      background: var(--accent);
-                      color: #fff;
-                      border: none;
-                      border-radius: 8px;
-                      padding: 0 20px;
-                      font-weight: 600;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                    }
-                    button:hover { background: var(--accent-hover); }
-                  </style>
-                </head>
-                <body>
-                  <header>
-                    <div class="header-title">
-                      <span>⚡ Qwen 2.5 Coder 14B Instruct</span>
-                      <span class="badge">ACTIVE</span>
-                    </div>
-                    <div style="font-size: 0.85rem; color: var(--text-muted);">
-                      OpenAI API Compatible Endpoint Active
-                    </div>
-                  </header>
-                  <div class="chat-container" id="chat">
-                    <div class="message assistant">
-                      <div class="msg-author">Qwen 2.5 Coder</div>
-                      <div>Hello! I am **Qwen 2.5 Coder 14B Instruct**, specialized in agentic coding, multi-file refactoring, debugging, and tool execution. How can I help you code today?</div>
-                    </div>
-                  </div>
-                  <div class="input-area">
-                    <textarea id="prompt" placeholder="Ask a coding question, request refactoring, or paste an error..." onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); send(); }"></textarea>
-                    <button onclick="send()">Send</button>
-                  </div>
-                  <script>
-                    const chat = document.getElementById('chat');
-                    const promptInput = document.getElementById('prompt');
-                    let history = [];
+                const contentDiv = botMsg.querySelector('.content');
 
-                    async function send() {
-                      const text = promptInput.value.trim();
-                      if (!text) return;
-                      promptInput.value = '';
+                try {{
+                  const response = await fetch('/v1/chat/completions', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{
+                      model: '{MODEL}',
+                      messages: history,
+                      stream: true
+                    }})
+                  }});
 
-                      // Add user message
-                      const userMsg = document.createElement('div');
-                      userMsg.className = 'message user';
-                      userMsg.innerHTML = '<div class="msg-author">You</div><div>' + escapeHtml(text) + '</div>';
-                      chat.appendChild(userMsg);
-                      history.push({ role: 'user', content: text });
+                  const reader = response.body.getReader();
+                  const decoder = new TextDecoder();
+                  let botReply = '';
+                  contentDiv.innerHTML = '';
 
-                      // Add bot placeholder
-                      const botMsg = document.createElement('div');
-                      botMsg.className = 'message assistant';
-                      botMsg.innerHTML = '<div class="msg-author">Qwen 2.5 Coder</div><div class="content">Thinking...</div>';
-                      chat.appendChild(botMsg);
-                      chat.scrollTop = chat.scrollHeight;
+                  while (true) {{
+                    const {{ done, value }} = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\\n');
+                    for (const line of lines) {{
+                      if (line.startsWith('data: ') && line !== 'data: [DONE]') {{
+                        try {{
+                          const json = JSON.parse(line.substring(6));
+                          const delta = json.choices[0]?.delta?.content || '';
+                          botReply += delta;
+                          contentDiv.innerText = botReply;
+                          chat.scrollTop = chat.scrollHeight;
+                        }} catch(e) {{}}
+                      }}
+                    }}
+                  }}
+                  history.push({{ role: 'assistant', content: botReply }});
+                }} catch (err) {{
+                  contentDiv.innerHTML = '<span style="color:#f85149;">Error connecting: ' + err.message + '</span>';
+                }}
+              }}
 
-                      const contentDiv = botMsg.querySelector('.content');
+              function escapeHtml(str) {{
+                return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+              }}
+            </script>
+          </body>
+          </html>
+          """
 
-                      try {
-                        const response = await fetch('/v1/chat/completions', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            model: '${MODEL_NAME}',
-                            messages: history,
-                            stream: true
-                          })
-                        });
+          class ProxyHandler(http.server.BaseHTTPRequestHandler):
+              def do_OPTIONS(self):
+                  self.send_response(200)
+                  self.send_header('Access-Control-Allow-Origin', '*')
+                  self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                  self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key')
+                  self.end_headers()
 
-                        const reader = response.body.getReader();
-                        const decoder = new TextDecoder();
-                        let botReply = '';
-                        contentDiv.innerHTML = '';
+              def do_GET(self):
+                  if self.path in ['/', '/index.html']:
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'text/html; charset=utf-8')
+                      self.send_header('Access-Control-Allow-Origin', '*')
+                      self.end_headers()
+                      self.wfile.write(HTML_PAGE.encode('utf-8'))
+                  else:
+                      self.forward_request('GET')
 
-                        while (true) {
-                          const { done, value } = await reader.read();
-                          if (done) break;
-                          const chunk = decoder.decode(value);
-                          const lines = chunk.split('\\n');
-                          for (const line of lines) {
-                            if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                              try {
-                                const json = JSON.parse(line.substring(6));
-                                const delta = json.choices[0]?.delta?.content || '';
-                                botReply += delta;
-                                contentDiv.innerText = botReply;
-                                chat.scrollTop = chat.scrollHeight;
-                              } catch(e) {}
-                            }
-                          }
-                        }
-                        history.push({ role: 'assistant', content: botReply });
-                      } catch (err) {
-                        contentDiv.innerHTML = '<span style="color:#f85149;">Error connecting to model server: ' + err.message + '</span>';
-                      }
-                    }
+              def do_POST(self):
+                  self.forward_request('POST')
 
-                    function escapeHtml(str) {
-                      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                    }
-                  </script>
-                </body>
-                </html>
-              `);
-              return;
-            }
+              def forward_request(self, method):
+                  target_path = self.path if self.path.startswith('/v1') else '/v1' + self.path
+                  target_url = f'http://127.0.0.1:11434{target_path}'
+                  
+                  content_len = int(self.headers.get('Content-Length', 0))
+                  post_data = self.rfile.read(content_len) if content_len > 0 else None
+                  
+                  headers = {k: v for k, v in self.headers.items() if k.lower() not in ['host', 'content-length']}
+                  req = urllib.request.Request(target_url, data=post_data, headers=headers, method=method)
+                  
+                  try:
+                      with urllib.request.urlopen(req, timeout=300) as resp:
+                          self.send_response(resp.status)
+                          for k, v in resp.getheaders():
+                              if k.lower() not in ['transfer-encoding', 'content-length']:
+                                  self.send_header(k, v)
+                          self.send_header('Access-Control-Allow-Origin', '*')
+                          self.end_headers()
+                          
+                          while True:
+                              chunk = resp.read(1024)
+                              if not chunk:
+                                  break
+                              self.wfile.write(chunk)
+                  except Exception as e:
+                      self.send_response(502)
+                      self.send_header('Content-Type', 'application/json')
+                      self.send_header('Access-Control-Allow-Origin', '*')
+                      self.end_headers()
+                      self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
 
-            // Proxy /v1/* requests directly to Ollama
-            const targetPath = parsedUrl.pathname.startsWith('/v1') ? parsedUrl.pathname : '/v1' + parsedUrl.pathname;
-            
-            const proxyReq = http.request({
-              hostname: '127.0.0.1',
-              port: OLLAMA_PORT,
-              path: targetPath,
-              method: req.method,
-              headers: req.headers
-            }, (proxyRes) => {
-              res.writeHead(proxyRes.statusCode, proxyRes.headers);
-              proxyRes.pipe(res);
-            });
+              def log_message(self, format, *args):
+                  pass
 
-            proxyReq.on('error', (e) => {
-              res.writeHead(502, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Failed to connect to backend Ollama engine', details: e.message }));
-            });
+          class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+              daemon_threads = True
 
-            req.pipe(proxyReq);
-          });
-
-          server.listen(PORT, '0.0.0.0', () => {
-            console.log(`OpenAI API & Web UI running on http://0.0.0.0:${PORT}`);
-          });
+          server = ThreadedServer(('0.0.0.0', PORT), ProxyHandler)
+          print(f"Server listening on http://0.0.0.0:{PORT}")
+          server.serve_forever()
           EOF
 
-          nohup node /tmp/webui/server.js > /tmp/webui.log 2>&1 & disown
+          python3 /tmp/webui.py "${MODEL_NAME}" > /tmp/webui.log 2>&1 &
           sleep 2
 
           # Verify Web UI is listening
