@@ -62,13 +62,14 @@ jobs:
           # Configure Ollama environment for OpenAI-compatible API
           sudo systemctl stop ollama 2>/dev/null || true
           
-          # Start Ollama with multi-threaded CPU configuration
+          # Start Ollama with multi-threaded CPU configuration and wildcard CORS origins
           export OLLAMA_HOST="0.0.0.0:11434"
+          export OLLAMA_ORIGINS="*"
           export OLLAMA_NUM_PARALLEL=2
           export OLLAMA_MAX_LOADED_MODELS=1
           export OLLAMA_KEEP_ALIVE="24h"
           
-          ollama serve > /tmp/ollama.log 2>&1 &
+          nohup ollama serve > /tmp/ollama.log 2>&1 & disown
           sleep 4
 
           echo "==> Pulling ${{ github.event.inputs.model_variant }} GGUF model..."
@@ -364,7 +365,7 @@ jobs:
                   content_len = int(self.headers.get('Content-Length', 0))
                   post_data = self.rfile.read(content_len) if content_len > 0 else None
                   
-                  headers = {k: v for k, v in self.headers.items() if k.lower() not in ['host', 'content-length']}
+                  headers = {'Content-Type': 'application/json'}
                   req = urllib.request.Request(target_url, data=post_data, headers=headers, method=method)
                   
                   try:
