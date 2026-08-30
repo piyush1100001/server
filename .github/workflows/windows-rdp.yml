@@ -161,3 +161,13 @@ jobs:
             Write-Host "[$MinsRemaining min remaining] Windows RDP service is running..."
             Start-Sleep -Seconds 300
           }
+
+      - name: Tailscale Auto-Cleanup & Machine Removal
+        if: always()
+        shell: powershell
+        run: |
+          $TailscaleExe = "C:\Program Files\Tailscale\tailscale.exe"
+          if (Test-Path $TailscaleExe) {
+            Write-Host "==> Automatically logging out and removing runner from Tailscale..."
+            & $TailscaleExe logout
+          }

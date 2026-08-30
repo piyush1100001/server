@@ -276,3 +276,11 @@ jobs:
             echo "[$MINS_LEFT min remaining] Desktop session is running..."
             sleep 300
           done
+
+      - name: Tailscale Auto-Cleanup & Machine Removal
+        if: always()
+        run: |
+          if command -v tailscale >/dev/null 2>&1; then
+            echo "==> Automatically logging out and removing runner from Tailscale..."
+            sudo tailscale logout || true
+          fi
