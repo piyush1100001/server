@@ -31,19 +31,22 @@ jobs:
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
           echo "==> Setting password for runner user..."
-          sudo dscl . -passwd /Users/runner "$PASS"
-          echo "runner:$PASS" | sudo chpasswd 2>/dev/null || true
+          # Reset password using sysadminctl and passwd
+          sudo sysadminctl -resetPasswordFor runner -newPassword "$PASS" 2>/dev/null || true
+          echo -e "${PASS}\n${PASS}" | sudo passwd runner 2>/dev/null || true
 
       - name: Enable Apple Screen Sharing (VNC / ARD)
         run: |
+          PASS="${{ github.event.inputs.vnc_password }}"
           echo "==> Enabling Apple Remote Desktop & Screen Sharing..."
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-          # Configure Kickstart permissions for user runner
+          # Configure Kickstart permissions and VNC password for runner
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
             -users runner -privs -all \
+            -setvncpw -vncpw "$PASS" \
             -restart -agent -menu
 
       - name: Setup Network Tunnels (Tailscale & Ngrok)
