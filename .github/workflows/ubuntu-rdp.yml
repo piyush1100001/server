@@ -193,9 +193,13 @@ jobs:
           mkdir -p ~/.config/sunshine
           cat << 'EOF' > ~/.config/sunshine/sunshine.conf
           origin_web_ui_allowed = wan
+          origin_pin_allowed = wan
+          csrf_allowed_origins = ["*"]
           min_threads = 2
           encoder = software
           address = 0.0.0.0
+          port = 47989
+          web_port = 47990
           EOF
           sed -i 's/^[ \t]*//' ~/.config/sunshine/sunshine.conf
 

@@ -62,7 +62,20 @@ jobs:
 
           $SunshineExe = "C:\Program Files\Sunshine\sunshine.exe"
           if (Test-Path $SunshineExe) {
-            Write-Host "==> Setting Sunshine credentials and starting service..."
+            Write-Host "==> Configuring Sunshine settings and credentials..."
+            $SunshineConfigDir = "C:\Program Files\Sunshine\config"
+            New-Item -ItemType Directory -Force -Path $SunshineConfigDir | Out-Null
+            $Conf = @(
+              "origin_web_ui_allowed = wan"
+              "origin_pin_allowed = wan"
+              "csrf_allowed_origins = [""*""]"
+              "min_threads = 2"
+              "address = 0.0.0.0"
+              "port = 47989"
+              "web_port = 47990"
+            )
+            $Conf | Out-File -FilePath "$SunshineConfigDir\sunshine.conf" -Encoding utf8
+            
             & $SunshineExe --creds admin $Password
             Start-Process -FilePath $SunshineExe -WindowStyle Hidden
           }
