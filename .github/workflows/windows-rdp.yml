@@ -81,19 +81,26 @@ jobs:
             if (Test-Path $TailscaleExe) {
               Write-Host "==> Connecting Tailscale mesh network..."
               & $TailscaleExe up --authkey=$TS_KEY --hostname="gha-windows-rdp" --accept-routes
-              Start-Sleep -Seconds 5
-              $TS_IP = (& $TailscaleExe ip -4).Trim()
+              
+              # Retry loop to ensure Tailscale IPv4 address is fully assigned
+              for ($i = 0; $i -lt 15; $i++) {
+                Start-Sleep -Seconds 1
+                $TS_IP = (& $TailscaleExe ip -4 2>$null).Trim()
+                if ($TS_IP -ne "") { break }
+              }
+              Write-Host "==> Tailscale IP assigned: $TS_IP"
             }
           }
 
           $SunshineExe = "C:\Program Files\Sunshine\sunshine.exe"
           if (Test-Path $SunshineExe) {
             Write-Host "==> Configuring Sunshine settings and credentials with Tailscale IP ($TS_IP)..."
+            # Stop any default background service instances to apply new config cleanly
+            Get-Process sunshine -ErrorAction SilentlyContinue | Stop-Process -Force
+
             # Set credentials first
             & $SunshineExe --creds admin $Password
 
-            $SunshineConfigDir = "C:\Program Files\Sunshine\config"
-            New-Item -ItemType Directory -Force -Path $SunshineConfigDir | Out-Null
             $Conf = @(
               "origin_web_ui_allowed = wan,lan,pc"
               "origin_pin_allowed = wan,lan,pc"
@@ -103,9 +110,22 @@ jobs:
               "port = 47989"
               "web_port = 47990"
             )
-            $Conf | Out-File -FilePath "$SunshineConfigDir\sunshine.conf" -Encoding utf8
+
+            # Write config to all paths checked by Sunshine on Windows
+            $ConfigPaths = @(
+              "C:\Program Files\Sunshine\config\sunshine.conf",
+              "C:\ProgramData\Sunshine\sunshine.conf",
+              "$env:USERPROFILE\.config\sunshine\sunshine.conf"
+            )
+
+            foreach ($cfg in $ConfigPaths) {
+              $dir = Split-Path $cfg
+              if (!(Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+              $Conf | Out-File -FilePath $cfg -Encoding utf8
+            }
             
-            Start-Process -FilePath $SunshineExe -WindowStyle Hidden
+            # Start Sunshine background process with explicit config path
+            Start-Process -FilePath $SunshineExe -ArgumentList "`"$env:USERPROFILE\.config\sunshine\sunshine.conf`"" -WindowStyle Hidden
           }
 
           # Setup Ngrok if token is provided
