@@ -27,18 +27,20 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Configure macOS User Credentials & Auto-Login
+      - name: Configure Dedicated RDP User & Graphical Auto-Login
         run: |
           PASS="${{ github.event.inputs.vnc_password }}"
-          echo "==> Configuring runner credentials and graphical auto-login..."
+          echo "==> Creating dedicated admin user 'rdpuser' for Screen Sharing..."
           
-          # Set runner user password across DirectoryService and system
-          sudo dscl . -passwd /Users/runner "" "$PASS" 2>/dev/null || true
-          echo -e "${PASS}\n${PASS}" | sudo passwd runner 2>/dev/null || true
-          sudo sysadminctl -resetPasswordFor runner -newPassword "$PASS" 2>/dev/null || true
+          # Create dedicated macOS admin user with verified password
+          sudo sysadminctl -deleteUser rdpuser 2>/dev/null || true
+          sudo sysadminctl -addUser rdpuser -fullName "Remote Admin" -password "$PASS" -admin 2>/dev/null || true
+          
+          # Also set runner password via dscl
+          sudo dscl . -passwd /Users/runner "$PASS" 2>/dev/null || true
 
           # Configure macOS graphical Auto-Login into Aqua desktop
-          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser runner
+          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser rdpuser
           sudo python3 -c "
           key = [125, 137, 82, 35, 210, 188, 221, 234, 163, 162, 206, 127]
           pwd = b'${PASS}'
@@ -61,10 +63,11 @@ jobs:
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
             "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteDesktopAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1665555555);" 2>/dev/null || true
 
-          # Authorize runner user in Screen Sharing Directory Group (non-interactive)
+          # Authorize rdpuser and runner in Screen Sharing Directory Group
           if ! dseditgroup com.apple.access_screensharing >/dev/null 2>&1; then
             echo y | sudo dseditgroup -o create com.apple.access_screensharing 2>/dev/null || true
           fi
+          echo y | sudo dseditgroup -o edit -a rdpuser -t user com.apple.access_screensharing 2>/dev/null || true
           echo y | sudo dseditgroup -o edit -a runner -t user com.apple.access_screensharing 2>/dev/null || true
           echo y | sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
           echo y | sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
@@ -170,7 +173,7 @@ jobs:
 
           echo "#### 💻 System & Credentials:" >> $GITHUB_STEP_SUMMARY
           echo "- **OS:** ${OS_NAME} ${OS_VERSION} (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Username:** \`runner\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Username:** \`rdpuser\` (or \`runner\`)" >> $GITHUB_STEP_SUMMARY
           echo "- **Password:** \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -178,8 +181,7 @@ jobs:
             echo "#### 🍏 Native Apple Screen Sharing via Tailscale:" >> $GITHUB_STEP_SUMMARY
             echo "- **Mac Screen Sharing Address:** \`vnc://${TS_IP}:5900\` (or \`vnc://gha-macos-rdp:5900\`)" >> $GITHUB_STEP_SUMMARY
             echo "- **How to connect:** Open Terminal on your Mac and run: \`open vnc://${TS_IP}:5900\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Auth Option 1 (Registered User):** Username: \`runner\`, Password: \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Auth Option 2 (VNC Password):** Select 'With a VNC password' and enter: \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Login:** Username \`rdpuser\`, Password \`${PASS}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -191,7 +193,7 @@ jobs:
 
           echo "========================================================"
           if [ -n "$CF_URL" ]; then echo ">>> 1-CLICK WEB DESKTOP: ${OPTIMIZED_WEB_URL}"; fi
-          echo ">>> USERNAME: runner"
+          echo ">>> USERNAME: rdpuser (or runner)"
           echo ">>> PASSWORD: ${PASS}"
           if [ -n "$TS_IP" ]; then echo ">>> NATIVE SCREEN SHARING: vnc://${TS_IP}:5900"; fi
           if [ -n "$NGROK_HOST" ]; then echo ">>> NGROK VNC: ${NGROK_HOST#tcp://}"; fi
