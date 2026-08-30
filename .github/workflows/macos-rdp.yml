@@ -33,7 +33,7 @@ jobs:
           echo "==> Creating dedicated admin user 'rdpuser' in OpenDirectory..."
           
           # Delete any old record if present
-          sudo dscl . -delete /Users/rdpuser 2>/dev/null || true
+          sudo dscl . -delete /Users/rdpuser >/dev/null 2>&1 || true
           
           # Create fresh OpenDirectory record
           sudo dscl . -create /Users/rdpuser
