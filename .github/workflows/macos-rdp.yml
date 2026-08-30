@@ -99,12 +99,6 @@ jobs:
           echo y | sudo dseditgroup -o edit -a admin -t group com.apple.access_screensharing 2>/dev/null || true
           echo y | sudo dseditgroup -o edit -a staff -t group com.apple.access_screensharing 2>/dev/null || true
 
-          # Set valid AuthenticationAuthority and password for runner and rdpuser
-          sudo dscl . -create /Users/runner AuthenticationAuthority ';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>' 2>/dev/null || true
-          sudo dscl . -passwd /Users/runner "$PASS" 2>/dev/null || true
-          sudo dscl . -create /Users/rdpuser AuthenticationAuthority ';ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>' 2>/dev/null || true
-          sudo dscl . -passwd /Users/rdpuser "$PASS" 2>/dev/null || true
-
           # Enable pure Screen Sharing launch daemon & preferences
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           sudo defaults write /Library/Preferences/com.apple.preferences.sharing.plist ScreenSharingEnabled -bool true
